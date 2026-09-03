@@ -653,6 +653,8 @@ export default function BulkMessageScreen() {
   const [loadingTargets, setLoadingTargets] = useState(true); // 첫 화면부터 자동 조회
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [truncatedCount, setTruncatedCount] = useState(0);
+  /** 붙여넣은 번호 중 볼 수 있는 고객 범위 밖이라 서버가 뺀 수(파트너 앱에서만 0 이 아니다). */
+  const [outOfScopeCount, setOutOfScopeCount] = useState(0);
   const [loadError, setLoadError] = useState("");
   const fetchSeq = useRef(0);
 
@@ -740,6 +742,7 @@ export default function BulkMessageScreen() {
       setTargets(t);
       setChecked(new Set(t.map(keyOf)));
       setTruncatedCount(Number(j.data.truncatedCount ?? 0));
+      setOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
@@ -1107,6 +1110,10 @@ export default function BulkMessageScreen() {
   const [pollKey, setPollKey] = useState(0);
   /** 서버가 발송 직전에 한 번 더 걸러낸 수신거부 인원 — 화면 목록을 만든 뒤에 차단된 분이 있을 수 있다. */
   const [blockedCount, setBlockedCount] = useState(0);
+  /** 발송 직전 서버가 범위 밖으로 뺀 수(파트너 앱). */
+  const [sendOutOfScopeCount, setSendOutOfScopeCount] = useState(0);
+  /** 진행 조회가 연달아 실패했을 때의 안내 — 「보내는 중」이 굳어 보이지 않게. */
+  const [pollError, setPollError] = useState("");
   /**
    * 알림톡 문안의 `#{안내구분}` 에 그대로 들어가는 값.
    * ★기본값을 두지 않는다 — 담당자가 이번 안내가 무엇인지 직접 고르게 한다.
@@ -1139,6 +1146,8 @@ export default function BulkMessageScreen() {
       setConfirmOpen(false);
       setJobId(j.data.jobId);
       setBlockedCount(Number(j.data.blockedCount ?? 0));
+      setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
+      setPollError("");
       setProgress({
         status: "running",
         total: j.data.total,
@@ -1162,17 +1171,28 @@ export default function BulkMessageScreen() {
     if (!jobId) return;
     let alive = true;
     let timer: ReturnType<typeof setInterval> | null = null;
+    // ★실패를 삼키기만 하면 연결이 끊겨도 「보내는 중」이 영영 남는다 — 3회 연속 실패부터 안내를 띄운다.
+    let misses = 0;
+    const POLL_MISS_LIMIT = 3;
+    const missed = (message: string) => {
+      misses += 1;
+      if (misses >= POLL_MISS_LIMIT) setPollError(message);
+    };
     const tick = async () => {
       try {
         const res = await fetch(`/api/bulk-message/jobs/${jobId}`);
         const j = await res.json();
         if (!alive) return;
         if (j.success) {
+          misses = 0;
+          setPollError("");
           setProgress(j.data as Progress);
           if (j.data.status !== "running" && timer) clearInterval(timer);
+        } else {
+          missed(typeof j.error === "string" && j.error ? j.error : "진행 상황을 불러오지 못했어요.");
         }
       } catch {
-        /* 한 번 실패해도 다음 회차에 다시 묻는다 */
+        if (alive) missed("진행 상황을 불러오지 못했어요. 연결을 확인한 뒤 새로고침해 주세요.");
       }
     };
     timer = setInterval(tick, 2000);
@@ -1348,6 +1368,12 @@ export default function BulkMessageScreen() {
             </div>
           )}
 
+          {outOfScopeCount > 0 && (
+            <StatusBox tone="warning" title={`번호 ${won(outOfScopeCount)}개는 볼 수 있는 고객 범위 밖이라 뺐어요`} className="mb-4">
+              이 앱에서 볼 수 있는 정부지원금 고객의 번호만 보낼 수 있어요. 나머지 번호는 담당자에게 문의해 주세요.
+            </StatusBox>
+          )}
+
           {truncatedCount > 0 && (
             <StatusBox tone="warning" title={`번호 ${won(truncatedCount)}개는 목록에서 잘렸어요`} className="mb-4">
               한 번에 {won(MAX_RECIPIENTS)}개까지만 다룰 수 있어서 앞 {won(MAX_RECIPIENTS)}개만 남겼습니다. 나머지는 이번 발송이 끝난 뒤 따로 보내 주세요.
@@ -1424,7 +1450,9 @@ export default function BulkMessageScreen() {
                     <td colSpan={7} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
                       {tab === "paste"
                         ? (pasted.trim()
-                          ? "번호로 알아볼 수 있는 고객이 없어요."
+                          ? (outOfScopeCount > 0
+                            ? "붙여넣은 번호가 모두 볼 수 있는 고객 범위 밖이에요."
+                            : "번호로 알아볼 수 있는 고객이 없어요.")
                           : "번호를 붙여넣으면 자동으로 골라냅니다.")
                         : statuses.length === 0
                           ? "진행상태를 한 개 이상 골라 주세요."
@@ -1825,6 +1853,16 @@ export default function BulkMessageScreen() {
                   <p className="mt-2.5 border-t border-wedly-bd pt-2.5 text-wedly-hint text-wedly-t2 break-keep">
                     수신거부 {won(blockedCount)}명은 서버에서 제외됐습니다 — 목록을 만든 뒤에 수신거부한 분이라 발송 대상에서 빠졌어요.
                   </p>
+                )}
+                {sendOutOfScopeCount > 0 && (
+                  <p className="mt-2.5 border-t border-wedly-bd pt-2.5 text-wedly-hint text-wedly-t2 break-keep">
+                    범위 밖 {won(sendOutOfScopeCount)}명은 서버에서 제외됐습니다 — 이 앱에서 볼 수 있는 고객이 아니라 발송 대상에서 빠졌어요.
+                  </p>
+                )}
+                {pollError && (
+                  <StatusBox tone="warning" title="진행 상황을 불러오지 못하고 있어요" className="mt-3">
+                    {pollError} 발송 자체는 서버에서 계속 돌고 있을 수 있어요 — 잠시 뒤 새로고침해 주세요.
+                  </StatusBox>
                 )}
               </div>
 
