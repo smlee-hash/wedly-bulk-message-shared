@@ -1178,7 +1178,11 @@ export default function BulkMessageScreen() {
       misses += 1;
       if (misses >= POLL_MISS_LIMIT) setPollError(message);
     };
+    // ★앞 조회가 안 끝났으면 다음 회차를 건너뛴다 — 서버가 느릴 때 2초마다 요청이 쌓여 장애를 키운다.
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const res = await fetch(`/api/bulk-message/jobs/${jobId}`);
         const j = await res.json();
@@ -1192,7 +1196,9 @@ export default function BulkMessageScreen() {
           missed(typeof j.error === "string" && j.error ? j.error : "진행 상황을 불러오지 못했어요.");
         }
       } catch {
-        if (alive) missed("진행 상황을 불러오지 못했어요. 연결을 확인한 뒤 새로고침해 주세요.");
+        if (alive) missed("진행 상황을 불러오지 못했어요.");
+      } finally {
+        inFlight = false;
       }
     };
     timer = setInterval(tick, 2000);
@@ -1861,7 +1867,7 @@ export default function BulkMessageScreen() {
                 )}
                 {pollError && (
                   <StatusBox tone="warning" title="진행 상황을 불러오지 못하고 있어요" className="mt-3">
-                    {pollError} 발송 자체는 서버에서 계속 돌고 있을 수 있어요 — 잠시 뒤 새로고침해 주세요.
+                    {pollError} 발송은 서버에서 계속 돌고 있을 수 있어요. 이 화면을 그대로 두면 계속 다시 확인합니다 — 새로고침하면 이 작업의 진행 표를 다시 볼 수 없어요.
                   </StatusBox>
                 )}
               </div>
