@@ -6,8 +6,9 @@ import { BulkMessageManual } from "./BulkMessageManual";
 import { MAX_RECIPIENTS, TEST_SEND_CAP_PARTNER, TEST_SEND_CAP_STAFF } from "./limits";
 
 const html = renderToStaticMarkup(<BulkMessageManual />);
+const source = readFileSync(join(__dirname, "BulkMessageManual.tsx"), "utf8");
 
-describe("사용방법 탭 — 승인 미리보기의 내용을 다 옮겼나", () => {
+describe("사용방법 탭 — 승인 미리보기(가독성 판)의 내용을 다 옮겼나", () => {
   it("구역 제목 6개가 다 있다", () => {
     for (const title of [
       "받을 분 고르기",
@@ -15,15 +16,9 @@ describe("사용방법 탭 — 승인 미리보기의 내용을 다 옮겼나", 
       "발송 확인",
       "보낸 뒤 — 진행 표 읽기",
       "자주 묻는 질문",
-      "보내기 전 체크리스트",
+      "보내기 전 체크",
     ]) {
       expect(html, `구역 제목 「${title}」`).toContain(title);
-    }
-  });
-
-  it("구역 번호 01~06 이 다 있다", () => {
-    for (const no of ["01", "02", "03", "04", "05", "06"]) {
-      expect(html, `구역 번호 ${no}`).toContain(`>${no}<`);
     }
   });
 
@@ -45,6 +40,8 @@ describe("사용방법 탭 — 승인 미리보기의 내용을 다 옮겼나", 
     expect(html).toContain("500");
     expect(html).toContain("10건");
     expect(html).toContain("3건");
+    // 숫자를 손으로 박아 두면 limits.ts 를 고쳐도 매뉴얼만 옛 값으로 남는다.
+    expect(source).not.toMatch(/최대 500명|하루 10건|파트너 앱 3건/);
   });
 
   it("흐름 카드 3개를 눌러서 이동할 수 있다", () => {
@@ -61,10 +58,56 @@ describe("사용방법 탭 — 승인 미리보기의 내용을 다 옮겼나", 
     }
   });
 
-  it("체크리스트 5칸과 첫 진행 문구가 있다", () => {
+  it("체크리스트 5칸과 진행 문구 세 가지가 있다", () => {
     expect(html.match(/type="checkbox"/g) ?? []).toHaveLength(5);
     expect(html).toContain("0 / 5 확인");
     expect(html).toContain("아직 확인 전");
+    // 다 체크했을 때 문구는 첫 그리기에 안 나오므로 코드에 있는지로 본다.
+    expect(source).toContain("보내도 좋아요");
+  });
+});
+
+describe("가독성 — 사장님 지적(글자가 작다 · 문장이 길게 늘어진다) 반영", () => {
+  it("목차 링크 7개가 있다", () => {
+    expect(html.match(/href="#/g) ?? []).toHaveLength(7);
+  });
+
+  it("목차 + 720px 본문 열 두 칸 배치다", () => {
+    expect(source).toContain("md:grid-cols-[200px_minmax(0,1fr)]");
+    expect(source).toContain("max-w-[720px]");
+    expect(source).toContain('aria-label="사용방법 목차"');
+  });
+
+  it("현재 구역 강조는 IntersectionObserver 로 하고 서버 그리기에서 안 터진다", () => {
+    expect(source).toContain('typeof IntersectionObserver !== "undefined"');
+    expect(source).toContain('rootMargin: "-20% 0px -70% 0px"');
+  });
+
+  it("11px 층(text-wedly-hint)을 쓰지 않는다", () => {
+    // 가독성 재구성의 핵심 — 각주까지 최소 13px 로 올렸다.
+    expect(source).not.toContain("text-wedly-hint");
+  });
+
+  it("본문·보조 글자가 13px 밑으로 내려가지 않는다", () => {
+    // text-[10px] · text-[11px] · text-[12.5px] 처럼 12px 이하로 박은 자리가 없어야 한다.
+    const 작은글자 = source.split("\n").flatMap((line, i) => {
+      const m = line.match(/text-\[1[0-2][^\]]*\]/g);
+      return m ? m.map((c) => `${i + 1}행 ${c}`) : [];
+    });
+    expect(작은글자).toEqual([]);
+  });
+
+  it("표(<table>) 대신 카드 줄을 쓴다 — <thead>·<th> 없음", () => {
+    // ERP 글자 층 검사가 <thead>/<th> 크기를 따로 보므로 아예 쓰지 않는다.
+    expect(html).not.toContain("<table");
+    expect(html).not.toContain("<thead");
+    expect(html).not.toContain("<th ");
+  });
+
+  it("구역 제목은 h2 + text-wedly-section 이다 (ERP 글자 층 규칙)", () => {
+    expect(source).toContain('<h2 className="text-wedly-section font-bold text-wedly-t1 break-keep">');
+    expect(html.match(/<h2/g) ?? []).toHaveLength(6);
+    expect(html.match(/<h3/g) ?? []).toHaveLength(0);
   });
 });
 
