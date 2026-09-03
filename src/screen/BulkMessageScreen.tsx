@@ -664,6 +664,7 @@ export default function BulkMessageScreen() {
       setTargets([]);
       setChecked(new Set());
       setTruncatedCount(0);
+      setOutOfScopeCount(0);
       setLoadedOnce(true);
       setLoadingTargets(false);
       setLoadError("");
@@ -693,12 +694,14 @@ export default function BulkMessageScreen() {
       // 「목록에서 고르기」는 사람이 직접 고르도록 비워 둔다.
       setChecked(new Set(checkedKeysOnLoad(tabRef.current, t.map((x) => ({ key: keyOf(x), sendable: x.sendable })))));
       setTruncatedCount(0);
+      setOutOfScopeCount(0);
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
       setTargets([]);
       setChecked(new Set());
       setTruncatedCount(0);
+      setOutOfScopeCount(0);
       setLoadedOnce(true);
       setLoadError(`대상을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
     } finally {
@@ -712,6 +715,7 @@ export default function BulkMessageScreen() {
       setTargets([]);
       setChecked(new Set());
       setTruncatedCount(0);
+      setOutOfScopeCount(0);
       setLoadedOnce(false);
       setLoadingTargets(false);
       setLoadError("");
@@ -749,6 +753,7 @@ export default function BulkMessageScreen() {
       setTargets([]);
       setChecked(new Set());
       setTruncatedCount(0);
+      setOutOfScopeCount(0);
       setLoadedOnce(true);
       setLoadError(`번호를 확인하지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
     } finally {
