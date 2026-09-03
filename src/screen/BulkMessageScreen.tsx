@@ -42,6 +42,8 @@ import { Input } from "../ui/Input";
 import { Modal } from "../ui/Modal";
 import { detectAdWords } from "../rules/checks";
 import { cn } from "../ui/cn";
+import { BulkMessageManual } from "./BulkMessageManual";
+import { MAX_RECIPIENTS } from "./limits";
 import {
   PASTE_DEBOUNCE_MS,
   LOADING_TARGETS_HINT,
@@ -149,7 +151,7 @@ const NEEDS_FILL_RE = /\[확인 필요[^\]]*\]/g;
 const COST_MIN = 7;
 const COST_MAX = 28;
 
-const MAX_RECIPIENTS = 500;
+// MAX_RECIPIENTS 는 limits.ts 에 있다 — 사용방법 탭도 같은 값을 쓰기 때문(고리 방지).
 
 // ────────────────────────────────────────────────────────────── 작은 도구
 
@@ -616,6 +618,9 @@ function Stepper({
 
 export default function BulkMessageScreen() {
   const [step, setStep] = useState<Step>(1);
+  // 화면 보기 — 「발송하기」와 「사용방법」. 발송 쪽 상태는 이 부품이 들고 있어
+  // 사용방법을 보다 돌아와도 고르던 대상·안내문·발송 진행이 그대로 남는다.
+  const [view, setView] = useState<"send" | "manual">("send");
 
   // 오류 알림 — window.alert 금지. 화면 위 빨간 상태 박스로 띄우고 5초 뒤 지운다.
   const [errorMsg, setErrorMsg] = useState("");
@@ -1292,6 +1297,38 @@ export default function BulkMessageScreen() {
         </StatusBox>
       )}
 
+      {/* ══════════ 화면 보기 — 발송하기 / 사용방법 ══════════ */}
+      <div role="tablist" aria-label="화면 보기" className="mb-4 flex flex-wrap items-center gap-2">
+        {([
+          { id: "send", label: "발송하기" },
+          { id: "manual", label: "사용방법" },
+        ] as const).map((v) => {
+          const on = view === v.id;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => setView(v.id)}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors duration-150 ease-out",
+                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent",
+                on
+                  ? "border border-wedly-accent bg-wedly-accent text-white"
+                  : "border border-wedly-bd bg-white text-wedly-t2 hover:bg-wedly-bg-gray",
+              )}
+            >
+              {v.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {view === "manual" ? (
+        <BulkMessageManual />
+      ) : (
+      <>
       <Stepper step={step} canGo={canGo} onGo={goStep} />
 
       {/* ══════════ 01 받을 분 고르기 ══════════ */}
@@ -2030,6 +2067,8 @@ export default function BulkMessageScreen() {
           )}
         </div>
       </Modal>
+      </>
+      )}
     </>
   );
 }
