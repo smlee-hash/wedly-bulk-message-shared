@@ -11,6 +11,25 @@ export function canConfirmSend(opts: {
   return opts.targetsOk && !opts.tooMany && isNoticeCategory(opts.noticeCategory);
 }
 
+/** 진행 표 머리글. ★진행을 아직 못 받은 동안(되살린 직후)을 「발송이 멈췄어요」로 그리면 담당자가 사고로 읽는다. */
+export const PROGRESS_LOADING_HEADLINE = "진행 상황을 불러오는 중…";
+
+export function progressHeadline(status: string | null | undefined): string {
+  if (!status) return PROGRESS_LOADING_HEADLINE;
+  if (status === "running") return "보내는 중이에요";
+  if (status === "done") return "발송이 끝났어요";
+  return "발송이 멈췄어요";
+}
+
+/** 화면이 처음 뜰 때 보관한 작업 번호로 되살릴지 — 되살릴 값이 없으면 null. */
+export function restoredJobFromStore(saved: string | null | undefined): { jobId: string } | null {
+  const jobId = (saved ?? "").trim();
+  return jobId ? { jobId } : null;
+}
+
+/** 되살린 작업이 사라졌을 때(404) 담당자에게 보이는 한 줄 — 그냥 1단계로 돌려보내면 왜 돌아왔는지 모른다. */
+export const JOB_GONE_NOTICE = "이전 발송 기록을 찾을 수 없어 처음부터 시작합니다.";
+
 type BadgeVariant = "default" | "blue" | "green" | "red" | "yellow" | "purple";
 
 export interface AlimtalkBadge {

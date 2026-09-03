@@ -87,11 +87,14 @@ import {
   uniqueNeedsFill,
 } from "./step2-helpers";
 import {
+  JOB_GONE_NOTICE,
   NOTICE_CATEGORIES,
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
   failureReasonOf,
+  progressHeadline,
+  restoredJobFromStore,
 } from "./step3-helpers";
 
 // ────────────────────────────────────────────────────────────── 타입·상수
@@ -1137,6 +1140,12 @@ export default function BulkMessageScreen() {
   /** 진행 조회가 연달아 실패했을 때의 안내 — 「보내는 중」이 굳어 보이지 않게. */
   const [pollError, setPollError] = useState("");
   /**
+   * 보관한 작업 번호로 되살린 화면인가.
+   * ★대상·안내문은 복원 대상이 아니다 — 3단계 확인 표를 그대로 그리면 「받는 사람 0명 · 약 0원」이 뜬다.
+   *  되살린 화면에서는 진행 표만 그린다.
+   */
+  const [restoredFromStore, setRestoredFromStore] = useState(false);
+  /**
    * 알림톡 문안의 `#{안내구분}` 에 그대로 들어가는 값.
    * ★기본값을 두지 않는다 — 담당자가 이번 안내가 무엇인지 직접 고르게 한다.
    */
@@ -1144,11 +1153,13 @@ export default function BulkMessageScreen() {
 
   // ★새로고침 뒤 되살리기 — 적어 둔 작업 번호가 있으면 3단계로 열어 아래 폴링이 진행 표를 다시 채운다.
   useEffect(() => {
-    let saved = "";
-    try { saved = sessionStorage.getItem(JOB_ID_STORE_KEY) ?? ""; } catch { /* 보관함을 못 써도 화면은 돈다 */ }
-    if (!saved) return;
-    setJobId(saved);
+    let saved: string | null = null;
+    try { saved = sessionStorage.getItem(JOB_ID_STORE_KEY); } catch { /* 보관함을 못 써도 화면은 돈다 */ }
+    const restored = restoredJobFromStore(saved);
+    if (!restored) return;
+    setJobId(restored.jobId);
     setStep(3);
+    setRestoredFromStore(true);
   }, []);
 
   const send = useCallback(async () => {
@@ -1178,6 +1189,8 @@ export default function BulkMessageScreen() {
       setJobId(j.data.jobId);
       // 새 발송은 옛 값을 덮어쓴다 — 새로고침해도 이 작업의 진행 표를 다시 연다.
       try { sessionStorage.setItem(JOB_ID_STORE_KEY, String(j.data.jobId)); } catch { /* 보관함을 못 써도 발송은 돈다 */ }
+      // 새 발송은 이 화면에서 대상·안내문을 다 고른 것이라 확인 표를 그대로 그린다.
+      setRestoredFromStore(false);
       setBlockedCount(Number(j.data.blockedCount ?? 0));
       setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
       setPollError("");
@@ -1225,11 +1238,19 @@ export default function BulkMessageScreen() {
           setPollError("");
           setProgress(j.data as Progress);
           if (j.data.status !== "running" && timer) clearInterval(timer);
+        } else if (res.status === 404) {
+          // 남의 작업·없는 작업이면 적어 둔 번호를 지우고 **1단계로 돌려보낸다** —
+          // jobId 를 남기면 1·2단계가 잠긴 채(canGo) 화면이 갇힌다.
+          try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }
+          if (timer) clearInterval(timer);
+          setJobId("");
+          setProgress(null);
+          setRestoredFromStore(false);
+          setPollError("");
+          setStep(1);
+          alertError(JOB_GONE_NOTICE);
+          return;
         } else {
-          // 남의 작업·없는 작업(404)이면 적어 둔 번호를 지운다 — 다음 새로고침 때 되살리지 않게.
-          if (res.status === 404) {
-            try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }
-          }
           missed(typeof j.error === "string" && j.error ? j.error : "진행 상황을 불러오지 못했어요.");
         }
       } catch {
@@ -1244,7 +1265,7 @@ export default function BulkMessageScreen() {
       alive = false;
       if (timer) clearInterval(timer);
     };
-  }, [jobId, pollKey]);
+  }, [jobId, pollKey, alertError]);
 
   const pending = progress ? Math.max(0, progress.total - progress.sent - progress.failed) : 0;
   /** 채널톡에는 안내가 심겼는데 **알림톡만** 못 나간 사람 수. 요약의 「보냄」에 섞여 있어 따로 센다. */
@@ -1828,6 +1849,8 @@ export default function BulkMessageScreen() {
             desc="마지막으로 한 번 더 확인하고 보냅니다"
           />
 
+          {/* 되살린 화면에서는 확인 표를 안 그린다 — 대상·안내문이 복원되지 않아 0명·0원으로 보인다. */}
+          {!restoredFromStore && (
           <div className="mb-4 overflow-hidden rounded-2xl border border-wedly-bd">
             {[
               {
@@ -1870,6 +1893,7 @@ export default function BulkMessageScreen() {
               </div>
             ))}
           </div>
+          )}
 
           {!jobId && (
             <div className="mb-4 flex min-w-0 flex-col gap-1">
@@ -1924,7 +1948,7 @@ export default function BulkMessageScreen() {
               <div className="rounded-2xl border border-wedly-bd bg-white p-4 shadow-[0_1px_2px_rgba(10,34,68,0.05),0_6px_18px_rgba(10,34,68,0.08)]">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="text-wedly-sub font-semibold text-wedly-t1">
-                    {progress?.status === "running" ? "보내는 중이에요" : progress?.status === "done" ? "발송이 끝났어요" : "발송이 멈췄어요"}
+                    {progressHeadline(progress?.status)}
                   </span>
                   <span className="ml-auto text-wedly-sub tabular-nums text-wedly-t2">
                     {won((progress?.sent ?? 0) + (progress?.failed ?? 0))} / {won(progress?.total ?? 0)}명

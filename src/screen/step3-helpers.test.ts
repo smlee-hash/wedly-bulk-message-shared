@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALIMTALK_REASON_MISSING,
@@ -6,7 +8,29 @@ import {
   alimtalkFailedCountOf,
   canConfirmSend,
   failureReasonOf,
+  progressHeadline,
+  restoredJobFromStore,
 } from "./step3-helpers";
+
+describe("새로고침 뒤 되살리기", () => {
+  it("보관값이 있으면 되살리고, 진행을 못 받은 동안 머리글은 「불러오는 중」", () => {
+    expect(restoredJobFromStore("job_1")).toEqual({ jobId: "job_1" });
+    expect(restoredJobFromStore("  ")).toBeNull();
+    expect(restoredJobFromStore(null)).toBeNull();
+    // ★되살린 직후엔 진행을 아직 못 받았다 — 여기서 「발송이 멈췄어요」가 뜨면 담당자가 사고로 읽는다.
+    expect(progressHeadline(undefined)).toBe("진행 상황을 불러오는 중…");
+    expect(progressHeadline("running")).toBe("보내는 중이에요");
+    expect(progressHeadline("done")).toBe("발송이 끝났어요");
+    expect(progressHeadline("interrupted")).toBe("발송이 멈췄어요");
+    // 배선까지 본다 — 판단만 맞고 화면이 안 쓰면 옛 문구가 그대로 뜬다.
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    expect(src).toContain("progressHeadline(progress?.status)");
+    expect(src).toContain("restoredJobFromStore(saved)");
+    expect(src).toContain("setRestoredFromStore(true)");
+    expect(src).toContain("alertError(JOB_GONE_NOTICE)");
+    expect(src).toContain("{!restoredFromStore && (");
+  });
+});
 
 describe("NOTICE_CATEGORIES", () => {
   it("담당자가 고르는 안내 내용 네 가지다", () => {
