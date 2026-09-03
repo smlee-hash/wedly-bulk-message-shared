@@ -62,7 +62,7 @@ function Tile({ tone, icon: Icon }: { tone: TileTone; icon: ComponentType<{ clas
 /** 구역 머리줄 — 번호 + 제목 + 오른쪽 작은 안내. 구역 구분은 색이 아니라 이 머리줄이 한다. */
 function SectionHead({ no, title, desc }: { no: string; title: string; desc: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-2.5 border-b border-wedly-bd bg-wedly-bg-gray px-4 py-3">
+    <div className="flex flex-wrap items-center gap-2.5 border-b border-wedly-bd bg-wedly-bg-gray px-4 py-3 lg:pr-16">
       <span className="text-wedly-tablehead font-bold tabular-nums text-wedly-accent-ink">{no}</span>
       <h3 className="min-w-0 text-wedly-sub font-semibold text-wedly-t1 break-keep">{title}</h3>
       <span className="ml-auto text-wedly-hint text-wedly-muted break-keep">{desc}</span>
@@ -358,7 +358,7 @@ export function BulkMessageManual() {
             [
               "번호 붙여넣기",
               "엑셀 등 다른 자료의 번호로 보낼 때",
-              `번호를 복사해 붙여넣으면 고객이 자동으로 짝지어집니다. 한 번에 ${MAX_RECIPIENTS}개까지, 넘치면 앞 ${MAX_RECIPIENTS}개만 남고 안내가 뜹니다.`,
+              `번호를 복사해 붙여넣으면 고객이 자동으로 짝지어집니다. 등록되지 않은 번호도 그대로 올라와 보낼 수 있어요(회사명·대표명은 「—」, 개인화 값은 「확인 필요」). 파트너 앱에서는 볼 수 있는 고객 범위 밖 번호가 빠집니다. 한 번에 ${MAX_RECIPIENTS}개까지, 넘치면 앞 ${MAX_RECIPIENTS}개만 남고 안내가 뜹니다.`,
             ],
           ]}
         />
@@ -465,8 +465,8 @@ export function BulkMessageManual() {
 
         <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
           <InfoBox tone="purple" icon={RefreshCw} title="다시 변환" soft>
-            원문을 고쳤거나 결과가 마음에 안 들면 <Kbd>다시 변환</Kbd>. 결과가 비어 있으면 「변환이 끝나지 않았어요」가
-            뜨고 발송으로 못 넘어갑니다.
+            원문을 고쳤거나 결과가 마음에 안 들면 <Kbd>다시 변환</Kbd>. 결과가 비어 있으면
+            「먼저 안내문 변환이 끝나야 해요」가 뜨고 발송으로 못 넘어갑니다.
           </InfoBox>
           <InfoBox tone="blue" icon={Braces} title="{대표명} · {회사명}" soft>
             「눌러서 넣기」 버튼으로 원문에 넣으면 <b className="font-semibold text-wedly-t1">받는 분마다 실제 이름·회사명</b>
@@ -538,15 +538,16 @@ export function BulkMessageManual() {
             「실패한 이유」를 보세요. 예) <i>비즈톡 문구가 승인 상태가 아닙니다</i> = 카카오 문구 승인 전.
           </InfoBox>
           <InfoBox tone="blue" icon={RotateCcw} title="이어보내기" soft>
-            진행이 3분 넘게 멈추면 <Kbd>이어보내기</Kbd>가 나타납니다. 이미 받은 분은 빼고 남은 분만 이어갑니다. 파트너
-            앱은 이어보낼 때 볼 수 있는 고객 범위를 다시 확인합니다.
+            발송이 서버 재시작(배포)으로 끊기면 「중단」, 오류로 끝나면 「실패」 상태가 되고, 남은 분이 있으면{" "}
+            <Kbd>이어보내기</Kbd>가 나타납니다. 이미 받은 분은 빼고 남은 분만 이어갑니다. 진행이 3분 넘게 안 올라가면
+            「발송이 오래 멈춰 있어요」 안내가 뜨니 잠시 뒤 새로 고쳐 상태를 다시 확인하세요. 파트너 앱은 이어보낼 때 볼
+            수 있는 고객 범위를 다시 확인합니다.
           </InfoBox>
         </div>
 
         <NoteBox tone="gray" icon={Clock} title="진행 상황을 못 불러오고 있어요 — 라고 뜨면">
           발송은 서버에서 계속 돌고 있습니다. 화면을 그대로 두면 계속 다시 확인합니다.{" "}
-          <b className="font-semibold text-wedly-t1">새로고침하면 이 작업의 진행 표는 다시 볼 수 없으니</b> 끝날 때까지
-          두세요.
+          <b className="font-semibold text-wedly-t1">새로고침해도 이 작업의 진행 표는 다시 열립니다.</b>
         </NoteBox>
       </Section>
 
@@ -554,9 +555,10 @@ export function BulkMessageManual() {
       <Section no="05" title="자주 묻는 질문" desc="눌러서 펼치기">
         <div className="grid gap-2">
           <Faq q="번호를 붙여넣었는데 표가 비어 있어요">
-            「번호로 알아볼 수 있는 고객이 없어요」면 그 번호가 어느 고객에게도 등록돼 있지 않은 것입니다. 「볼 수 있는
-            고객 범위 밖」이면 이 앱에서 볼 수 있는 정부지원금 고객이 아닙니다(파트너 앱). 하이픈·공백은 있어도 되고,
-            02로 시작하는 유선번호는 잡히지 않습니다.
+            표가 비는 경우는 두 가지예요. 휴대폰 모양 번호가 하나도 없을 때(02로 시작하는 유선번호는 잡히지 않아요 —
+            「번호로 알아볼 수 있는 고객이 없어요」가 뜹니다)와, 파트너 앱에서 붙여넣은 번호가 전부 볼 수 있는 고객 범위
+            밖일 때(「붙여넣은 번호가 모두 볼 수 있는 고객 범위 밖이에요」)입니다. 하이픈·공백은 있어도 됩니다. 등록되지
+            않은 번호는 빈 회사명으로 올라오니 보내기 전에 한 번 더 확인하세요.
           </Faq>
           <Faq q="「시험 발송은 하루 N건까지예요」가 떠요">
             {`내 번호로 보내는 시험 발송은 하루 ${TEST_SEND_CAP_STAFF}건(파트너 앱 ${TEST_SEND_CAP_PARTNER}건)입니다. 내일 다시 할 수 있어요. 발송이 실패한 건은 횟수에서 돌려줍니다.`}
@@ -570,8 +572,8 @@ export function BulkMessageManual() {
             승인 전, 수신거부 등). 고객이 위들리 채널톡을 열면 안내문이 보입니다.
           </Faq>
           <Faq q="실수로 같은 안내를 두 번 눌렀어요">
-            10분 안에 같은 내용은 「방금 같은 안내를 보냈어요」로 막히고, 시간이 지나 다시 보내도 이미 받은 분은 자동으로
-            건너뜁니다.
+            10분 안에 같은 내용은 「같은 내용을 방금 보냈습니다. 10분 뒤에 다시 시도해 주세요.」로 막히고, 시간이 지나
+            다시 보내도 이미 받은 분은 자동으로 건너뜁니다.
           </Faq>
           <Faq q="답장은 누가 받나요">
             보낸 담당자가 채널톡 담당자로 등록돼 있으면 그 사람에게, 아니면 기존 담당 컨설턴트 규칙대로 배정됩니다.

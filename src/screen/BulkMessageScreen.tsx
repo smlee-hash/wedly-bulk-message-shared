@@ -616,6 +616,18 @@ function Stepper({
 
 // ────────────────────────────────────────────────────────────── 본체
 
+/**
+ * 작업 번호를 적어 두는 자리(탭이 살아 있는 동안만).
+ * ★새로고침하면 진행 표가 사라지던 것을 막는다 — 화면이 다시 뜰 때 이 값으로 3단계를 되살린다.
+ */
+const JOB_ID_STORE_KEY = "wedly-bulk-message:jobId";
+
+/** 화면 보기 탭 — 두 판을 늘 그려 두고 안 보는 쪽만 숨긴다(탭을 옮겨도 상태가 남게). */
+const VIEW_TABS = [
+  { id: "send", label: "발송하기", tabId: "bulk-tab-send", paneId: "bulk-pane-send" },
+  { id: "manual", label: "사용방법", tabId: "bulk-tab-manual", paneId: "bulk-pane-manual" },
+] as const;
+
 export default function BulkMessageScreen() {
   const [step, setStep] = useState<Step>(1);
   // 화면 보기 — 「발송하기」와 「사용방법」. 발송 쪽 상태는 이 부품이 들고 있어
@@ -1130,6 +1142,15 @@ export default function BulkMessageScreen() {
    */
   const [noticeCategory, setNoticeCategory] = useState("");
 
+  // ★새로고침 뒤 되살리기 — 적어 둔 작업 번호가 있으면 3단계로 열어 아래 폴링이 진행 표를 다시 채운다.
+  useEffect(() => {
+    let saved = "";
+    try { saved = sessionStorage.getItem(JOB_ID_STORE_KEY) ?? ""; } catch { /* 보관함을 못 써도 화면은 돈다 */ }
+    if (!saved) return;
+    setJobId(saved);
+    setStep(3);
+  }, []);
+
   const send = useCallback(async () => {
     if (!canProceedWithTargets({
       loading: loadingTargets,
@@ -1155,6 +1176,8 @@ export default function BulkMessageScreen() {
       if (!j.success) throw new Error(j.error);
       setConfirmOpen(false);
       setJobId(j.data.jobId);
+      // 새 발송은 옛 값을 덮어쓴다 — 새로고침해도 이 작업의 진행 표를 다시 연다.
+      try { sessionStorage.setItem(JOB_ID_STORE_KEY, String(j.data.jobId)); } catch { /* 보관함을 못 써도 발송은 돈다 */ }
       setBlockedCount(Number(j.data.blockedCount ?? 0));
       setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
       setPollError("");
@@ -1203,6 +1226,10 @@ export default function BulkMessageScreen() {
           setProgress(j.data as Progress);
           if (j.data.status !== "running" && timer) clearInterval(timer);
         } else {
+          // 남의 작업·없는 작업(404)이면 적어 둔 번호를 지운다 — 다음 새로고침 때 되살리지 않게.
+          if (res.status === 404) {
+            try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }
+          }
           missed(typeof j.error === "string" && j.error ? j.error : "진행 상황을 불러오지 못했어요.");
         }
       } catch {
@@ -1279,6 +1306,21 @@ export default function BulkMessageScreen() {
     [canGo, step2ConversionReady, remainingMarkers, alertError, loadingTargets, loadError, tooLong, composedText.length, targetsOk],
   );
 
+  /** 탭 줄 글쇠 이동 — ←/→ 로 옮기고 Home/End 로 끝으로. 옮기면 포커스도 함께 간다. */
+  const onViewTabKeyDown = useCallback((e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    const last = VIEW_TABS.length - 1;
+    const cur = VIEW_TABS.findIndex((v) => v.id === view);
+    const next =
+      e.key === "Home" ? 0
+      : e.key === "End" ? last
+      : e.key === "ArrowLeft" ? (cur <= 0 ? last : cur - 1)
+      : (cur >= last ? 0 : cur + 1);
+    setView(VIEW_TABS[next].id);
+    document.getElementById(VIEW_TABS[next].tabId)?.focus();
+  }, [view]);
+
   // ── 그리기 ──────────────────────────────────────────────────
   const statusSelectOptions = useMemo(
     () => statusOptions.map((s) => ({ value: s, label: s })),
@@ -1299,18 +1341,20 @@ export default function BulkMessageScreen() {
 
       {/* ══════════ 화면 보기 — 발송하기 / 사용방법 ══════════ */}
       <div role="tablist" aria-label="화면 보기" className="mb-4 flex flex-wrap items-center gap-2">
-        {([
-          { id: "send", label: "발송하기" },
-          { id: "manual", label: "사용방법" },
-        ] as const).map((v) => {
+        {VIEW_TABS.map((v) => {
           const on = view === v.id;
           return (
             <button
               key={v.id}
+              id={v.tabId}
               type="button"
               role="tab"
               aria-selected={on}
+              aria-controls={v.paneId}
+              // 탭 줄은 화살표로 옮긴다 — 탭 글쇠는 판 안으로 들어가야 한다(활성 탭만 0).
+              tabIndex={on ? 0 : -1}
               onClick={() => setView(v.id)}
+              onKeyDown={onViewTabKeyDown}
               className={cn(
                 "rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors duration-150 ease-out",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent",
@@ -1325,10 +1369,8 @@ export default function BulkMessageScreen() {
         })}
       </div>
 
-      {view === "manual" ? (
-        <BulkMessageManual />
-      ) : (
-      <>
+      {/* 발송 판 — 떼지 않고 숨긴다(사용방법을 보다 돌아와도 고르던 대상·안내문·진행이 그대로). */}
+      <div role="tabpanel" id="bulk-pane-send" aria-labelledby="bulk-tab-send" hidden={view !== "send"}>
       <Stepper step={step} canGo={canGo} onGo={goStep} />
 
       {/* ══════════ 01 받을 분 고르기 ══════════ */}
@@ -1909,7 +1951,7 @@ export default function BulkMessageScreen() {
                 )}
                 {pollError && (
                   <StatusBox tone="warning" title="진행 상황을 불러오지 못하고 있어요" className="mt-3">
-                    {pollError} 발송은 서버에서 계속 돌고 있을 수 있어요. 이 화면을 그대로 두면 계속 다시 확인합니다 — 새로고침하면 이 작업의 진행 표를 다시 볼 수 없어요.
+                    {pollError} 발송은 서버에서 계속 돌고 있을 수 있어요. 이 화면을 그대로 두면 계속 다시 확인합니다. 새로고침해도 이 작업의 진행 표는 다시 열립니다.
                   </StatusBox>
                 )}
               </div>
@@ -2067,8 +2109,12 @@ export default function BulkMessageScreen() {
           )}
         </div>
       </Modal>
-      </>
-      )}
+      </div>
+
+      {/* 사용방법 판 — 떼지 않고 숨긴다(탭을 옮겨도 체크리스트·펼침이 그대로). */}
+      <div role="tabpanel" id="bulk-pane-manual" aria-labelledby="bulk-tab-manual" hidden={view !== "manual"}>
+        <BulkMessageManual />
+      </div>
     </>
   );
 }

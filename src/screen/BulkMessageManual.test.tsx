@@ -52,6 +52,15 @@ describe("사용방법 탭 — 승인 미리보기의 내용을 다 옮겼나", 
     expect(html.match(/tabindex="0"/g) ?? []).toHaveLength(3);
   });
 
+  it("인용한 화면 문구가 실제 문구 그대로다", () => {
+    // 매뉴얼이 「」로 인용하는 문구는 화면·서버가 실제로 내는 문구여야 한다.
+    //  - "먼저 안내문 변환이 끝나야 해요"  → step2-helpers.ts step2FooterHint
+    //  - "같은 내용을 방금 보냈습니다"      → 서버 발송 창구의 10분 중복 방어 문구
+    for (const quote of ["먼저 안내문 변환이 끝나야 해요", "같은 내용을 방금 보냈습니다"]) {
+      expect(html, `인용 문구 「${quote}」`).toContain(quote);
+    }
+  });
+
   it("체크리스트 5칸과 첫 진행 문구가 있다", () => {
     expect(html.match(/type="checkbox"/g) ?? []).toHaveLength(5);
     expect(html).toContain("0 / 5 확인");
@@ -86,5 +95,14 @@ describe("발송하기 / 사용방법 탭", () => {
     expect(src).toContain('aria-label="화면 보기"');
     expect(src).toContain('label: "발송하기"');
     expect(src).toContain('label: "사용방법"');
+  });
+
+  it("판 두 개를 늘 그리고(떼지 않고 숨김) 탭이 판을 가리킨다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 판을 떼면 탭을 옮길 때마다 체크리스트·펼침·고르던 대상이 초기화된다 — 늘 그리고 hidden 으로 숨긴다.
+    expect(src.match(/role="tabpanel"/g) ?? []).toHaveLength(2);
+    expect(src).toContain('hidden={view !== "send"}');
+    expect(src).toContain('hidden={view !== "manual"}');
+    expect(src).toContain("aria-controls={v.paneId}");
   });
 });
