@@ -72,6 +72,26 @@ describe("가독성 — 사장님 지적(글자가 작다 · 문장이 길게 �
     expect(html.match(/href="#/g) ?? []).toHaveLength(7);
   });
 
+  it("흐름 카드 제목은 구역 제목과 같은 층(14.5px)이다 — 더 크면 위계가 뒤집힌다", () => {
+    for (const t of ["1. 받을 분 고르기", "2. 안내문 만들기", "3. 발송 확인"]) {
+      expect(html, `흐름 카드 「${t}」 제목 층`).toContain(
+        `text-wedly-section font-semibold text-wedly-t1 break-keep">${t}<`,
+      );
+    }
+  });
+
+  it("좁은 폭에서는 목차가 가로 알약 줄, md 이상에서만 세로 sticky 목록이다", () => {
+    // 링크를 두 벌 그리면 주소 표식도 두 벌이 된다 — 한 벌만 그리고 반응형 클래스로 모양을 바꾼다.
+    expect(source).toContain("overflow-x-auto");
+    expect(source).toContain("md:sticky md:top-3");
+    expect(source).toContain('inline: "nearest", block: "nearest"');
+  });
+
+  it("목차를 누르면 주소의 구역 표식만 바뀐다(뒤로가기 기록·화면 튐 없음)", () => {
+    expect(source).toContain("history?.replaceState");
+    expect(source).not.toContain("pushState");
+  });
+
   it("목차 + 720px 본문 열 두 칸 배치다", () => {
     expect(source).toContain("md:grid-cols-[200px_minmax(0,1fr)]");
     expect(source).toContain("max-w-[720px]");
@@ -179,6 +199,16 @@ describe("발송하기 / 사용방법 탭", () => {
     expect(src).toContain('aria-label="화면 보기"');
     expect(src).toContain('label: "발송하기"');
     expect(src).toContain('label: "사용방법"');
+  });
+
+  it("주소에 구역 표식이 붙어 오면 사용방법 판을 열고 그 구역으로 내린다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    expect(src).toContain('hash.startsWith("#bulk-manual-")');
+    expect(src).toContain('setView("manual")');
+    expect(src).toContain("requestAnimationFrame");
+    expect(src).toContain('scrollIntoView({ block: "start" })');
+    expect(src).toContain("cancelAnimationFrame");
+    expect(src).toContain('typeof window === "undefined"');
   });
 
   it("판 두 개를 늘 그리고(떼지 않고 숨김) 탭이 판을 가리킨다", () => {

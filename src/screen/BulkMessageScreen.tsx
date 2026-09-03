@@ -637,6 +637,19 @@ export default function BulkMessageScreen() {
   // 사용방법을 보다 돌아와도 고르던 대상·안내문·발송 진행이 그대로 남는다.
   const [view, setView] = useState<"send" | "manual">("send");
 
+  // 주소에 사용방법 구역 표식(#bulk-manual-…)이 붙어 오면 그 판을 열고 그 구역으로 내려 준다.
+  // 판은 열려야 자리를 차지하므로 setView 뒤 화면이 한 번 그려진 다음(rAF) 옮긴다.
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const hash = window.location.hash;
+    if (!hash.startsWith("#bulk-manual-")) return undefined;
+    setView("manual");
+    const raf = window.requestAnimationFrame(() => {
+      document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, []);
+
   // 오류 알림 — window.alert 금지. 화면 위 빨간 상태 박스로 띄우고 5초 뒤 지운다.
   const [errorMsg, setErrorMsg] = useState("");
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

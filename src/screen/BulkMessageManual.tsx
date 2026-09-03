@@ -249,6 +249,8 @@ const CHECKLIST = [
 export function BulkMessageManual() {
   const sections = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
   const docRef = useRef<HTMLDivElement | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
+  const navLinks = useRef<Partial<Record<NavId, HTMLAnchorElement | null>>>({});
   const boxRef = useRef<HTMLElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const lockUntilRef = useRef(0);
@@ -281,10 +283,17 @@ export function BulkMessageManual() {
     setActive(NAV[activeSectionIndex(tops, scrollTop, clientHeight, scrollHeight)].id);
   }, []);
 
-  /** 목차·흐름 카드를 눌렀을 때 — 먼저 강조를 옮기고, 굴러가는 동안은 계산을 쉰다. */
-  const jumpTo = useCallback((id: NavId) => {
+  /**
+   * 목차·흐름 카드를 눌렀을 때 — 먼저 강조를 옮기고, 굴러가는 동안은 계산을 쉰다.
+   * 목차에서 누른 것이면 주소의 구역 표식(#bulk-manual-…)도 함께 갱신해 그대로 공유할 수 있게 한다.
+   * 기록을 쌓는 쪽이 아니라 replaceState 라 뒤로가기 기록이 늘지 않고 화면도 튀지 않는다.
+   */
+  const jumpTo = useCallback((id: NavId, updateHash = false) => {
     setActive(id);
     lockUntilRef.current = Date.now() + CLICK_LOCK_MS;
+    if (updateHash && typeof window !== "undefined" && typeof window.history?.replaceState === "function") {
+      window.history.replaceState(null, "", `#${domId(id)}`);
+    }
     sections.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -321,6 +330,19 @@ export function BulkMessageManual() {
     };
   }, [recalc]);
 
+  // 좁은 폭에서 목차는 가로로 흐르는 알약 줄이다 — 강조가 옮겨 가면 그 알약이 줄 안에서 보이게 민다.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const link = navLinks.current[active];
+    const row = navRef.current;
+    if (!link || !row) return;
+    // ★ 목차 줄이 화면 밖이면 건드리지 않는다. block:"nearest" 는 안 보이면 세로로도 굴리기 때문에,
+    //   아래쪽 구역을 읽는 중에 부르면 화면을 목차까지 위로 되끌어올린다.
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight) return;
+    link.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [active]);
+
   const bindSection = (id: NavId) => (el: HTMLElement | null) => {
     sections.current[id] = el;
   };
@@ -352,8 +374,14 @@ export function BulkMessageManual() {
   return (
     <div className="grid gap-5 md:grid-cols-[200px_minmax(0,1fr)]">
       {/* ══════════ 목차 ══════════ */}
-      <nav className="grid gap-1 self-start md:sticky md:top-3" aria-label="사용방법 목차">
-        <div className="px-2.5 py-1 text-[13px] font-semibold tracking-wide text-wedly-muted">
+      {/* 좁은 폭(md 미만)에서는 가로로 흐르는 알약 줄 — 세로 목록이 첫 화면을 다 먹지 않게.
+          md 이상에서는 왼쪽에 붙어 따라오는 세로 목록. 링크는 한 벌만 그린다(주소 표식도 한 벌). */}
+      <nav
+        ref={navRef}
+        aria-label="사용방법 목차"
+        className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 md:mx-0 md:grid md:gap-1 md:self-start md:overflow-visible md:px-0 md:pb-0 md:sticky md:top-3"
+      >
+        <div className="hidden px-2.5 py-1 text-[13px] font-semibold tracking-wide text-wedly-muted md:block">
           사용방법
         </div>
         {NAV.map((n) => {
@@ -361,22 +389,26 @@ export function BulkMessageManual() {
           return (
             <a
               key={n.id}
+              ref={(el) => {
+                navLinks.current[n.id] = el;
+              }}
               href={`#${domId(n.id)}`}
               aria-current={on ? "true" : undefined}
               onClick={(e) => {
                 e.preventDefault();
-                jumpTo(n.id);
+                jumpTo(n.id, true);
               }}
               className={cn(
-                "flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13.5px] leading-[21px] break-keep transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent",
+                "inline-flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-[13px] break-keep transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent",
+                "md:whitespace-normal md:rounded-xl md:px-2.5 md:py-2 md:text-[13.5px] md:leading-[21px]",
                 on
-                  ? "bg-wedly-bg-blue font-semibold text-wedly-accent"
-                  : "font-medium text-wedly-t2 hover:bg-wedly-bg-gray",
+                  ? "border-wedly-accent bg-wedly-accent font-semibold text-white md:border-transparent md:bg-wedly-bg-blue md:text-wedly-accent"
+                  : "border-wedly-bd bg-white font-medium text-wedly-t2 hover:bg-wedly-bg-gray md:border-transparent md:bg-transparent",
               )}
             >
               <span
                 className={cn(
-                  "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[13px] font-bold",
+                  "hidden h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[13px] font-bold md:inline-flex",
                   on ? "bg-wedly-accent text-white" : "bg-wedly-bg-gray text-wedly-t2",
                 )}
                 aria-hidden
@@ -435,7 +467,7 @@ export function BulkMessageManual() {
               >
                 <Tile tone={f.tone} icon={f.icon} size="lg" />
                 <div className="min-w-0">
-                  <p className="text-[15px] font-semibold leading-[22px] text-wedly-t1 break-keep">{f.title}</p>
+                  <p className="text-wedly-section font-semibold text-wedly-t1 break-keep">{f.title}</p>
                   <p className="text-[13.5px] leading-[21px] text-wedly-t2 break-keep">{f.desc}</p>
                 </div>
               </div>
