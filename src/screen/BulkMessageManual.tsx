@@ -5,6 +5,7 @@
 //  - 왼쪽 목차(sticky) + 오른쪽 본문 열(720px). 본문 14px/22px · 보조 13.5px · 각주 13px.
 //  - 표 태그는 쓰지 않는다 — 「항목 + 한 줄」 카드 줄(Row)로. 설명은 1~2줄.
 //  - 구역 제목은 h2 + text-wedly-section (ERP 글자 층 규칙). 표 머리글 태그는 안 쓴다.
+//  - 목차 강조는 스크롤 위치 계산(activeSectionIndex)으로 한다 — 화면 끝에서 틀리던 것 고침.
 // 금지: raw Tailwind 색 · 11px 층(각주까지 최소 13px). 숫자(500·10·3)는 limits.ts 한 곳에서.
 
 import {
@@ -55,6 +56,53 @@ type NavId = (typeof NAV)[number]["id"];
 
 /** 화면 안 다른 요소와 겹치지 않게 앞머리를 붙인다. */
 const domId = (id: NavId) => `bulk-manual-${id}`;
+
+/** 목차 강조가 읽는 자리 — 구역 머리가 화면 위에서 이만큼 내려온 순간부터 그 구역으로 친다. */
+const ACTIVE_OFFSET = 120;
+/** 목차·흐름 카드를 눌러 부드럽게 굴러가는 동안 스크롤 계산을 무시하는 시간(중간 구역 깜빡임 방지). */
+const CLICK_LOCK_MS = 600;
+
+/**
+ * 지금 읽고 있는 구역의 번호.
+ *
+ * 예전엔 IntersectionObserver 로 했는데 **화면 끝에서 틀렸다** — 맨 아래로 내려도 마지막 구역이
+ * 아래쪽 여백 밴드(rootMargin -70%)에 못 들어와 「자주 묻는 질문」이 강조된 채로 남았고,
+ * 좁은 폭에서 맨 위로 돌아와도 첫 구역 대신 「받을 분 고르기」가 강조됐다.
+ * 그래서 관찰이 아니라 **스크롤 위치를 직접 재서** 고른다. 순수 함수라 시험으로 못을 박는다.
+ */
+export function activeSectionIndex(
+  tops: number[],
+  scrollTop: number,
+  clientHeight: number,
+  scrollHeight: number,
+  offset: number = ACTIVE_OFFSET,
+): number {
+  if (tops.length === 0) return 0;
+  // 바닥에 닿으면 마지막 구역 — 마지막 구역이 짧아서 읽는 자리까지 못 올라와도 강조되게.
+  if (scrollTop + clientHeight >= scrollHeight - 2) return tops.length - 1;
+  const line = scrollTop + offset;
+  let hit = 0;
+  for (let i = 0; i < tops.length; i += 1) {
+    if (tops[i] <= line) hit = i;
+  }
+  return hit;
+}
+
+/**
+ * 본문이 실제로 굴러가는 상자를 찾는다(모달·패널 안이면 window 가 아니다).
+ * 위로 올라가며 세로 스크롤이 켜져 있고 실제로 넘치는 첫 조상. 없으면 null = 창 전체.
+ */
+function findScrollBox(from: HTMLElement | null): HTMLElement | null {
+  let node = from?.parentElement ?? null;
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
 
 // ────────────────────────────────────────────────────────────── 작은 조각
 
@@ -200,6 +248,10 @@ const CHECKLIST = [
 
 export function BulkMessageManual() {
   const sections = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
+  const docRef = useRef<HTMLDivElement | null>(null);
+  const boxRef = useRef<HTMLElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lockUntilRef = useRef(0);
   const [active, setActive] = useState<NavId>("overview");
 
   const [checked, setChecked] = useState<boolean[]>(() => CHECKLIST.map(() => false));
@@ -211,32 +263,63 @@ export function BulkMessageManual() {
     setChecked((prev) => prev.map((v, idx) => (idx === i ? !v : v)));
   }, []);
 
-  const goTo = useCallback((id: NavId) => {
+  /** 지금 스크롤 위치로 강조할 구역을 다시 고른다. */
+  const recalc = useCallback(() => {
+    const box = boxRef.current;
+    const scrollTop = box ? box.scrollTop : window.scrollY;
+    const clientHeight = box ? box.clientHeight : window.innerHeight;
+    const scrollHeight = box
+      ? box.scrollHeight
+      : (document.scrollingElement ?? document.documentElement).scrollHeight;
+    const boxTop = box ? box.getBoundingClientRect().top : 0;
+    const tops = NAV.map((n) => {
+      const el = sections.current[n.id];
+      if (!el) return Number.POSITIVE_INFINITY;
+      const top = el.getBoundingClientRect().top;
+      return box ? top - boxTop + box.scrollTop : top + window.scrollY;
+    });
+    setActive(NAV[activeSectionIndex(tops, scrollTop, clientHeight, scrollHeight)].id);
+  }, []);
+
+  /** 목차·흐름 카드를 눌렀을 때 — 먼저 강조를 옮기고, 굴러가는 동안은 계산을 쉰다. */
+  const jumpTo = useCallback((id: NavId) => {
+    setActive(id);
+    lockUntilRef.current = Date.now() + CLICK_LOCK_MS;
     sections.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  // 지금 읽고 있는 구역을 목차에서 강조한다. 서버 그리기에는 없는 물건이라 가드를 둔다.
+  // 지금 읽고 있는 구역을 목차에서 강조한다. 서버 그리기(SSR)에는 창이 없으니 가드를 둔다.
   useEffect(() => {
-    // 서버 그리기(SSR)에는 IntersectionObserver 가 없다 — 없으면 강조만 안 하고 넘어간다.
-    if (typeof IntersectionObserver !== "undefined") {
-      const io = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            if (!entry.isIntersecting) continue;
-            const hit = NAV.find((n) => domId(n.id) === entry.target.id);
-            if (hit) setActive(hit.id);
-          }
-        },
-        { rootMargin: "-20% 0px -70% 0px" },
-      );
-      for (const n of NAV) {
-        const el = sections.current[n.id];
-        if (el) io.observe(el);
-      }
-      return () => io.disconnect();
-    }
-    return undefined;
-  }, []);
+    if (typeof window === "undefined") return undefined;
+
+    boxRef.current = findScrollBox(docRef.current);
+
+    const run = () => {
+      rafRef.current = null;
+      if (Date.now() < lockUntilRef.current) return; // 눌러서 굴러가는 중 — 계산이 강조를 되돌리지 않게
+      recalc();
+    };
+    const onScroll = () => {
+      if (rafRef.current !== null) return; // 한 프레임에 한 번만
+      rafRef.current = window.requestAnimationFrame(run);
+    };
+    const onResize = () => {
+      // 폭이 바뀌면 한 열 ↔ 두 열로 바뀌어 굴러가는 상자가 달라질 수 있다.
+      boxRef.current = findScrollBox(docRef.current);
+      onScroll();
+    };
+
+    recalc(); // 마운트 직후 한 번 — 첫 그림에서도 맞는 구역이 강조되게
+    // 창이든 모달 안 상자든 한 곳에서 받는다. scroll 은 위로 안 올라오지만 내려가는 단계는 탄다.
+    document.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("scroll", onScroll, { capture: true } as EventListenerOptions);
+      window.removeEventListener("resize", onResize);
+      if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [recalc]);
 
   const bindSection = (id: NavId) => (el: HTMLElement | null) => {
     sections.current[id] = el;
@@ -282,8 +365,7 @@ export function BulkMessageManual() {
               aria-current={on ? "true" : undefined}
               onClick={(e) => {
                 e.preventDefault();
-                setActive(n.id);
-                goTo(n.id);
+                jumpTo(n.id);
               }}
               className={cn(
                 "flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13.5px] leading-[21px] break-keep transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent",
@@ -308,7 +390,7 @@ export function BulkMessageManual() {
       </nav>
 
       {/* ══════════ 본문 열 ══════════ */}
-      <div className="grid max-w-[720px] gap-7 text-sm leading-[22px] text-wedly-t2">
+      <div ref={docRef} className="grid max-w-[720px] gap-7 text-sm leading-[22px] text-wedly-t2">
         {/* ── 한눈에 보기 ── */}
         <section ref={bindSection("overview")} id={domId("overview")} className="grid gap-3.5 scroll-mt-4">
           <div className="grid gap-2.5 rounded-2xl border border-wedly-bd bg-wedly-bg-gray px-5 py-5">
@@ -342,11 +424,11 @@ export function BulkMessageManual() {
                 key={f.title}
                 role="button"
                 tabIndex={0}
-                onClick={() => goTo(f.go)}
+                onClick={() => jumpTo(f.go)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    goTo(f.go);
+                    jumpTo(f.go);
                   }
                 }}
                 className="grid cursor-pointer grid-cols-[auto_1fr] items-center gap-3 rounded-xl border border-wedly-bd bg-white px-3.5 py-3 transition-[background-color,box-shadow] duration-200 ease-out hover:bg-wedly-bg-gray hover:shadow-[0_1px_2px_rgba(10,34,68,0.05),0_6px_18px_rgba(10,34,68,0.08)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent motion-reduce:transition-none"

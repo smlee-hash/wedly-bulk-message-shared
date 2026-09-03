@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BulkMessageManual } from "./BulkMessageManual";
+import { activeSectionIndex, BulkMessageManual } from "./BulkMessageManual";
 import { MAX_RECIPIENTS, TEST_SEND_CAP_PARTNER, TEST_SEND_CAP_STAFF } from "./limits";
 
 const html = renderToStaticMarkup(<BulkMessageManual />);
@@ -78,9 +78,14 @@ describe("가독성 — 사장님 지적(글자가 작다 · 문장이 길게 �
     expect(source).toContain('aria-label="사용방법 목차"');
   });
 
-  it("현재 구역 강조는 IntersectionObserver 로 하고 서버 그리기에서 안 터진다", () => {
-    expect(source).toContain('typeof IntersectionObserver !== "undefined"');
-    expect(source).toContain('rootMargin: "-20% 0px -70% 0px"');
+  it("현재 구역 강조는 스크롤 위치 계산으로 하고 서버 그리기에서 안 터진다", () => {
+    // IntersectionObserver 는 화면 끝에서 틀려(맨 아래·맨 위) 버렸다 — 되살리지 마라.
+    expect(source).not.toContain("IntersectionObserver(");
+    expect(source).toContain('typeof window === "undefined"');
+    expect(source).toContain("requestAnimationFrame");
+    expect(source).toContain("passive: true");
+    expect(source).toContain("cancelAnimationFrame");
+    expect(source).toContain("removeEventListener");
   });
 
   it("11px 층(text-wedly-hint)을 쓰지 않는다", () => {
@@ -108,6 +113,42 @@ describe("가독성 — 사장님 지적(글자가 작다 · 문장이 길게 �
     expect(source).toContain('<h2 className="text-wedly-section font-bold text-wedly-t1 break-keep">');
     expect(html.match(/<h2/g) ?? []).toHaveLength(6);
     expect(html.match(/<h3/g) ?? []).toHaveLength(0);
+  });
+});
+
+describe("activeSectionIndex — 목차 강조 계산", () => {
+  // 구역 7개(한눈에 보기 · 1~4 · ? · ✓)의 상자 기준 top
+  const tops = [0, 400, 900, 1500, 2100, 2700, 3300];
+  const H = 800; // 보이는 높이
+  const S = 4000; // 전체 높이
+
+  it("맨 위에서는 첫 구역", () => {
+    expect(activeSectionIndex(tops, 0, H, S)).toBe(0);
+    // 읽는 자리(120px)보다 위에 있는 구역이 하나도 없어도 첫 구역으로 떨어진다
+    expect(activeSectionIndex([200, 700], 0, H, S)).toBe(0);
+  });
+
+  it("중간에서는 읽는 자리를 지난 마지막 구역", () => {
+    // 1000 + 120 = 1120 → 900 은 지났고 1500 은 아직 → 세 번째(번호 2)
+    expect(activeSectionIndex(tops, 1000, H, S)).toBe(2);
+    expect(activeSectionIndex(tops, 2000, H, S)).toBe(4);
+  });
+
+  it("바닥에 닿으면 마지막 구역 — 짧아서 읽는 자리까지 못 올라와도", () => {
+    // 3200 + 800 = 4000 ≥ 4000 - 2 → 마지막(번호 6).
+    // 읽는 자리로만 재면 3320 이라 3300 을 갓 지나 우연히 맞지만,
+    // 마지막 구역이 짧아 top 이 3900 이어도 바닥 규칙이 마지막을 고른다.
+    expect(activeSectionIndex(tops, 3200, H, S)).toBe(6);
+    expect(activeSectionIndex([0, 400, 900, 1500, 2100, 2700, 3900], 3200, H, S)).toBe(6);
+  });
+
+  it("구역 경계 직전·직후에서 한 칸씩 넘어간다", () => {
+    expect(activeSectionIndex(tops, 779, H, S)).toBe(1); // 779 + 120 = 899 → 아직 두 번째
+    expect(activeSectionIndex(tops, 780, H, S)).toBe(2); // 780 + 120 = 900 → 세 번째로
+  });
+
+  it("구역이 없으면 0 (빈 배열에 터지지 않는다)", () => {
+    expect(activeSectionIndex([], 0, H, S)).toBe(0);
   });
 });
 
