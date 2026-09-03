@@ -64,7 +64,7 @@ function SectionHead({ no, title, desc }: { no: string; title: string; desc: Rea
   return (
     <div className="flex flex-wrap items-center gap-2.5 border-b border-wedly-bd bg-wedly-bg-gray px-4 py-3">
       <span className="text-wedly-tablehead font-bold tabular-nums text-wedly-accent-ink">{no}</span>
-      <h3 className="min-w-0 text-wedly-section font-semibold text-wedly-t1 break-keep">{title}</h3>
+      <h3 className="min-w-0 text-wedly-sub font-semibold text-wedly-t1 break-keep">{title}</h3>
       <span className="ml-auto text-wedly-hint text-wedly-muted break-keep">{desc}</span>
     </div>
   );
@@ -161,7 +161,7 @@ function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="text-wedly-sub">
           {rows.map((cells, r) => (
             <tr key={r} className="border-t border-wedly-bd">
               {cells.map((c, i) =>
@@ -169,12 +169,12 @@ function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
                   <th
                     key={i}
                     scope="row"
-                    className="whitespace-nowrap bg-wedly-bg-gray px-3 py-2.5 text-left align-top text-wedly-sub font-semibold text-wedly-t1"
+                    className="whitespace-nowrap bg-wedly-bg-gray px-3 py-2.5 text-left align-top font-semibold text-wedly-t1"
                   >
                     {c}
                   </th>
                 ) : (
-                  <td key={i} className="min-w-0 px-3 py-2.5 align-top text-wedly-sub text-wedly-t2 break-keep">
+                  <td key={i} className="min-w-0 px-3 py-2.5 align-top text-wedly-t2 break-keep">
                     {c}
                   </td>
                 ),
@@ -276,7 +276,7 @@ export function BulkMessageManual() {
       {/* ══════════ 머리 — 한 줄 요약 + 숫자 칩 ══════════ */}
       <div className="grid grid-cols-1 items-center gap-3.5 rounded-2xl border border-wedly-bd bg-wedly-bg-gray px-4 py-4 md:grid-cols-[1fr_auto]">
         <div className="min-w-0">
-          <h2 className="text-wedly-page font-bold text-wedly-t1 break-keep">
+          <h2 className="text-wedly-section font-bold text-wedly-t1 break-keep">
             계약완료 고객에게 안내를 한 번에 — 3단계, 약 3분
           </h2>
           <p className="mt-1 text-wedly-sub text-wedly-t2 break-keep">
@@ -413,7 +413,7 @@ export function BulkMessageManual() {
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="min-w-0">
-            <h4 className="mb-1.5 text-wedly-label font-semibold uppercase tracking-wider text-wedly-muted">
+            <h4 className="mb-1.5 text-wedly-sub font-semibold uppercase tracking-wider text-wedly-muted">
               원문 — 평소 쓰던 대로
             </h4>
             <div className="whitespace-pre-wrap rounded-xl border border-wedly-bd bg-wedly-bg-gray px-3.5 py-3 text-wedly-sub text-wedly-t1 break-keep">
@@ -429,7 +429,7 @@ export function BulkMessageManual() {
             </p>
           </div>
           <div className="min-w-0">
-            <h4 className="mb-1.5 text-wedly-label font-semibold uppercase tracking-wider text-wedly-muted">
+            <h4 className="mb-1.5 text-wedly-sub font-semibold uppercase tracking-wider text-wedly-muted">
               변환 결과 미리보기
             </h4>
             <div className="rounded-xl border border-wedly-bd bg-white px-3.5 py-3 text-wedly-sub text-wedly-t1 break-keep">
