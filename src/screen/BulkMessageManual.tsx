@@ -163,15 +163,6 @@ function InfoCard({
   );
 }
 
-/** 화면 속 버튼 이름을 글 안에서 가리킬 때. */
-function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-md border border-wedly-bd bg-white px-1.5 py-0.5 text-[13px] font-semibold text-wedly-t1">
-      {children}
-    </span>
-  );
-}
-
 function Faq({ q, children }: { q: string; children: ReactNode }) {
   return (
     <details className="group overflow-hidden rounded-xl border border-wedly-bd bg-white">
@@ -388,8 +379,7 @@ export function BulkMessageManual() {
                   <K>언제</K> 진행상태 기준으로 여럿에게 보낼 때 (가장 빠름)
                 </>,
                 <>
-                  <K>어떻게</K> 진행상태(기본 <Badge variant="green">계약완료</Badge>)와 담당 컨설턴트를 고르면 표가
-                  채워집니다
+                  <K>어떻게</K> 진행상태(기본 계약완료)와 담당 컨설턴트를 고르면 표가 채워집니다
                 </>,
               ]}
             />
@@ -497,8 +487,8 @@ export function BulkMessageManual() {
           </p>
           <div className="grid gap-2.5 md:grid-cols-2">
             <InfoCard tone="purple" icon={RefreshCw} title="다시 변환">
-              원문을 고쳤거나 결과가 마음에 안 들면 <Kbd>다시 변환</Kbd>을 누르세요. 결과가 비면 「먼저 안내문 변환이
-              끝나야 해요」로 막힙니다.
+              원문을 고쳤거나 결과가 마음에 안 들면 누르세요. 결과가 비면 「먼저 안내문 변환이 끝나야 해요」로
+              막힙니다.
             </InfoCard>
             <InfoCard tone="blue" icon={Braces} title={"{대표명} · {회사명}"}>
               원문에 넣으면 받는 분마다 실제 이름·회사명으로 바뀝니다. 값이 없는 분은 「확인 필요」.
