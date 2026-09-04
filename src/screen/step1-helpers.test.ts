@@ -4,20 +4,19 @@ import {
   MANAGER_ALL,
   MANAGER_MINE,
   LOADING_TARGETS_HINT,
-  PICK_TAB_HINT,
+  MANAGER_LOCKED_LABEL,
+  SEARCH_PLACEHOLDER,
   canProceedWithTargets,
-  checkedKeysOnLoad,
+  droppedSummary,
+  hiddenPickedCount,
+  reconcilePicked,
   step1ListPhase,
   listFetchDelayMs,
   managerQueryOf,
   managerSelectOptions,
   mergeManagerNames,
-  multiSelectOptionKey,
-  multiSelectTriggerKey,
-  nextOptionIndex,
+  nextManagerLock,
   resolveManagerScope,
-  STATUS_PLACEHOLDER,
-  statusTriggerLabel,
   uniqueManagers,
 } from "./step1-helpers";
 
@@ -33,22 +32,6 @@ describe("uniqueManagers", () => {
       t("강민아"),
       t("   "),
     ])).toEqual(["강민아", "우수하", "이충훈"]);
-  });
-});
-
-describe("statusTriggerLabel", () => {
-  it("없으면 빈 문자열 — 버튼은 placeholder 를 쓴다", () => {
-    expect(statusTriggerLabel([])).toBe("");
-    expect(STATUS_PLACEHOLDER).toBe("진행상태 선택");
-  });
-
-  it("하나면 그 이름", () => {
-    expect(statusTriggerLabel(["계약완료"])).toBe("계약완료");
-  });
-
-  it("여러 개면 고른 값을 모두 이어 붙인다", () => {
-    expect(statusTriggerLabel(["계약완료", "가망"])).toBe("계약완료, 가망");
-    expect(statusTriggerLabel(["계약완료", "가망", "입금완료"])).toBe("계약완료, 가망, 입금완료");
   });
 });
 
@@ -71,7 +54,7 @@ describe("managerSelectOptions", () => {
 });
 
 describe("managerQueryOf", () => {
-  it("내 고객은 onlyMine:true — 서버가 로그인 이름으로 거른다", () => {
+  it("기본은 내 고객 — 서버가 로그인 이름으로 거른다", () => {
     expect(managerQueryOf(MANAGER_MINE)).toEqual({ onlyMine: true });
   });
 
@@ -79,9 +62,33 @@ describe("managerQueryOf", () => {
     expect(managerQueryOf(MANAGER_ALL)).toEqual({ onlyMine: false });
   });
 
-  it("다른 담당은 그 이름을 managerName 으로 보낸다", () => {
+  it("이름을 고르면 그 이름으로", () => {
+    expect(managerQueryOf("김서연")).toEqual({ onlyMine: false, managerName: "김서연" });
     expect(managerQueryOf("이충훈")).toEqual({ onlyMine: false, managerName: "이충훈" });
     expect(managerQueryOf("  우수하  ")).toEqual({ onlyMine: false, managerName: "우수하" });
+  });
+});
+
+describe("nextManagerLock — 파트너 앱 담당 잠금", () => {
+  it("서버가 잠갔다고 하면 잠근다", () => {
+    expect(nextManagerLock(false, { ok: true, lockedToMe: true })).toBe(true);
+  });
+
+  it("서버가 안 잠갔거나 값을 안 주면(ERP) 고르개를 그린다", () => {
+    expect(nextManagerLock(false, { ok: true, lockedToMe: false })).toBe(false);
+    expect(nextManagerLock(false, { ok: true })).toBe(false);
+    expect(nextManagerLock(true, { ok: true, lockedToMe: false })).toBe(false);
+  });
+
+  it("조회가 실패하면 지금 상태를 그대로 지킨다 — 잠긴 사람에게 고르개가 나타나면 안 된다", () => {
+    expect(nextManagerLock(true, { ok: false })).toBe(true);
+    expect(nextManagerLock(false, { ok: false })).toBe(false);
+    // 실패 응답에 값이 섞여 와도 안 믿는다
+    expect(nextManagerLock(true, { ok: false, lockedToMe: false })).toBe(true);
+  });
+
+  it("잠긴 자리에 뜨는 글이 고정이다", () => {
+    expect(MANAGER_LOCKED_LABEL).toBe("내 고객만 볼 수 있어요");
   });
 });
 
@@ -119,46 +126,113 @@ describe("mergeManagerNames", () => {
 });
 
 describe("listFetchDelayMs", () => {
-  it("첫 진입(아직 조회한 적 없음)은 즉시", () => {
-    expect(listFetchDelayMs({ hadListQuery: false, statusesChanged: false })).toBe(0);
-    expect(listFetchDelayMs({ hadListQuery: false, statusesChanged: true, managerChanged: true })).toBe(0);
+  it("첫 조회는 기다리지 않는다", () => {
+    expect(listFetchDelayMs({ hadListQuery: false })).toBe(0);
+    expect(listFetchDelayMs({ hadListQuery: false, managerChanged: true, searchChanged: true })).toBe(0);
   });
 
-  it("진행상태가 바뀌면 300ms", () => {
-    expect(listFetchDelayMs({ hadListQuery: true, statusesChanged: true })).toBe(LIST_DEBOUNCE_MS);
+  it("담당이 바뀌면 잠깐 기다린다", () => {
+    expect(listFetchDelayMs({ hadListQuery: true, managerChanged: true })).toBe(LIST_DEBOUNCE_MS);
     expect(LIST_DEBOUNCE_MS).toBe(300);
   });
 
-  it("담당이 바뀌면 300ms", () => {
-    expect(listFetchDelayMs({
-      hadListQuery: true,
-      statusesChanged: false,
-      managerChanged: true,
-    })).toBe(LIST_DEBOUNCE_MS);
+  it("검색어가 바뀌면 잠깐 기다린다 — 한 글자마다 서버를 부르지 않게", () => {
+    expect(listFetchDelayMs({ hadListQuery: true, searchChanged: true })).toBe(LIST_DEBOUNCE_MS);
   });
 
-  it("붙여넣기 탭에서 목록 탭으로 돌아올 때는 즉시", () => {
-    expect(listFetchDelayMs({ hadListQuery: true, statusesChanged: false, managerChanged: false })).toBe(0);
+  it("아무것도 안 바뀌었으면 기다리지 않는다", () => {
+    expect(listFetchDelayMs({ hadListQuery: true })).toBe(0);
+    expect(listFetchDelayMs({ hadListQuery: true, managerChanged: false, searchChanged: false })).toBe(0);
   });
 });
 
-describe("checkedKeysOnLoad", () => {
-  const rows = [
-    { key: "a", sendable: true },
-    { key: "b", sendable: false },
-    { key: "c", sendable: true },
-  ];
-
-  it("조건 탭은 보낼 수 있는 사람 전부", () => {
-    expect(checkedKeysOnLoad("filter", rows)).toEqual(["a", "c"]);
+describe("hiddenPickedCount", () => {
+  it("고른 사람 중 지금 목록에 없는 수를 센다", () => {
+    expect(hiddenPickedCount(["a", "b", "c"], ["a", "c"])).toBe(1);
   });
 
-  it("목록에서 고르기는 비운다 — 직접 체크하는 탭", () => {
-    expect(checkedKeysOnLoad("pick", rows)).toEqual([]);
+  it("전부 보이면 0", () => {
+    expect(hiddenPickedCount(["a"], ["a", "b"])).toBe(0);
   });
 
-  it("붙여넣기는 비운다(호출부가 따로 채운다)", () => {
-    expect(checkedKeysOnLoad("paste", rows)).toEqual([]);
+  it("아무도 안 골랐으면 0", () => {
+    expect(hiddenPickedCount([], ["a", "b"])).toBe(0);
+  });
+
+  it("목록이 비면 고른 사람이 전부 안 보이는 것으로 센다", () => {
+    expect(hiddenPickedCount(["a", "b"], [])).toBe(2);
+  });
+});
+
+describe("reconcilePicked", () => {
+  const row = (key: string) => ({ key, name: `${key}회사` });
+  const pickedOf = (...keys: string[]) =>
+    new Map(keys.map((k) => [k, row(k)] as const));
+  const incoming = (
+    ...rows: Array<{ key: string; sendable: boolean; excludeReason?: string }>
+  ) => rows.map((r) => ({ excludeReason: "", ...r }));
+
+  it("ⓐ 목록에 있고 여전히 보낼 수 있으면 그대로 둔다", () => {
+    const before = pickedOf("a", "b");
+    const out = reconcilePicked(before, incoming({ key: "a", sendable: true }, { key: "b", sendable: true }));
+    expect([...out.picked.keys()]).toEqual(["a", "b"]);
+    expect(out.dropped).toEqual([]);
+    // 뺄 사람이 없으면 받은 Map 을 그대로 — 화면이 괜히 다시 그려지지 않게
+    expect(out.picked).toBe(before);
+  });
+
+  it("ⓑ 목록에 있는데 수신거부로 바뀌면 명단에서 뺀다", () => {
+    const before = pickedOf("a", "b");
+    const out = reconcilePicked(
+      before,
+      incoming({ key: "a", sendable: true }, { key: "b", sendable: false, excludeReason: "수신거부" }),
+    );
+    expect([...out.picked.keys()]).toEqual(["a"]);
+    expect(out.dropped).toEqual([{ key: "b", reason: "수신거부" }]);
+    expect(out.picked).not.toBe(before); // 원본은 안 건드린다
+    expect([...before.keys()]).toEqual(["a", "b"]);
+  });
+
+  it("ⓒ 목록에 아예 없으면 그대로 둔다 — 검색·담당 때문에 안 보이는 것뿐이다", () => {
+    const out = reconcilePicked(pickedOf("a", "b"), incoming({ key: "a", sendable: true }));
+    expect([...out.picked.keys()]).toEqual(["a", "b"]);
+    expect(out.dropped).toEqual([]);
+  });
+
+  it("ⓓ 뺀 사유별 건수가 맞는다", () => {
+    const out = reconcilePicked(
+      pickedOf("a", "b", "c", "d"),
+      incoming(
+        { key: "a", sendable: false, excludeReason: "수신거부" },
+        { key: "b", sendable: false, excludeReason: "중복 번호" },
+        { key: "c", sendable: false, excludeReason: "수신거부" },
+        { key: "d", sendable: true },
+      ),
+    );
+    expect([...out.picked.keys()]).toEqual(["d"]);
+    expect(droppedSummary(out.dropped)).toBe("수신거부 2 · 중복 번호 1");
+  });
+
+  it("사유가 비어 있어도 「제외」로 알려 준다 — 조용히 사라지지 않게", () => {
+    const out = reconcilePicked(pickedOf("a"), incoming({ key: "a", sendable: false, excludeReason: "" }));
+    expect(out.dropped).toEqual([{ key: "a", reason: "제외" }]);
+  });
+
+  it("고른 사람이 없으면 아무 일도 없다", () => {
+    const before = new Map<string, { key: string; name: string }>();
+    const out = reconcilePicked(before, incoming({ key: "a", sendable: false, excludeReason: "수신거부" }));
+    expect(out.picked).toBe(before);
+    expect(out.dropped).toEqual([]);
+  });
+});
+
+describe("droppedSummary", () => {
+  it("아무도 안 빠졌으면 빈 글", () => {
+    expect(droppedSummary([])).toBe("");
+  });
+
+  it("한 사유면 그 사유와 건수", () => {
+    expect(droppedSummary([{ key: "a", reason: "수신거부" }])).toBe("수신거부 1");
   });
 });
 
@@ -194,50 +268,8 @@ describe("step1ListPhase", () => {
 });
 
 describe("copy", () => {
-  it("조회 중·직접 고르기 안내 문구가 고정이다", () => {
+  it("조회 중 안내·검색 칸 예시 문구가 고정이다", () => {
     expect(LOADING_TARGETS_HINT).toBe("대상을 불러오는 중이에요");
-    expect(PICK_TAB_HINT).toBe("보낼 분을 직접 체크해 주세요");
-  });
-});
-
-describe("nextOptionIndex", () => {
-  it("아래·위로 순환한다", () => {
-    expect(nextOptionIndex(0, 3, 1)).toBe(1);
-    expect(nextOptionIndex(2, 3, 1)).toBe(0);
-    expect(nextOptionIndex(0, 3, -1)).toBe(2);
-  });
-
-  it("아직 가리키는 칸이 없으면 방향의 끝에서 시작한다", () => {
-    expect(nextOptionIndex(-1, 3, 1)).toBe(0);
-    expect(nextOptionIndex(-1, 3, -1)).toBe(2);
-  });
-});
-
-describe("multiSelectTriggerKey", () => {
-  it("닫힌 상태에서 방향키·Enter·Space 로 연다", () => {
-    expect(multiSelectTriggerKey("ArrowDown", false, -1, 4)).toEqual({ type: "open", index: 0 });
-    expect(multiSelectTriggerKey("ArrowUp", false, -1, 4)).toEqual({ type: "open", index: 3 });
-    expect(multiSelectTriggerKey("Enter", false, -1, 4)).toEqual({ type: "open", index: 0 });
-    expect(multiSelectTriggerKey(" ", false, -1, 4)).toEqual({ type: "open", index: 0 });
-  });
-
-  it("열린 상태에서 방향키는 이동, Enter/Space 는 토글, Esc 는 닫기", () => {
-    expect(multiSelectTriggerKey("ArrowDown", true, 0, 3)).toEqual({ type: "move", index: 1 });
-    expect(multiSelectTriggerKey("ArrowUp", true, 0, 3)).toEqual({ type: "move", index: 2 });
-    expect(multiSelectTriggerKey("Enter", true, 1, 3)).toEqual({ type: "toggle" });
-    expect(multiSelectTriggerKey(" ", true, 1, 3)).toEqual({ type: "toggle" });
-    expect(multiSelectTriggerKey("Escape", true, 1, 3)).toEqual({ type: "close" });
-    expect(multiSelectTriggerKey("Home", true, 2, 3)).toEqual({ type: "move", index: 0 });
-    expect(multiSelectTriggerKey("End", true, 0, 3)).toEqual({ type: "move", index: 2 });
-  });
-});
-
-describe("multiSelectOptionKey", () => {
-  it("옵션에서 Enter/Space 토글, 방향키 이동, Esc 닫기", () => {
-    expect(multiSelectOptionKey("Enter", 1, 3)).toEqual({ type: "toggle" });
-    expect(multiSelectOptionKey(" ", 1, 3)).toEqual({ type: "toggle" });
-    expect(multiSelectOptionKey("ArrowDown", 1, 3)).toEqual({ type: "move", index: 2 });
-    expect(multiSelectOptionKey("ArrowUp", 0, 3)).toEqual({ type: "move", index: 2 });
-    expect(multiSelectOptionKey("Escape", 1, 3)).toEqual({ type: "close" });
+    expect(SEARCH_PLACEHOLDER).toBe("예) 위들리 · 김대표 · 4567");
   });
 });

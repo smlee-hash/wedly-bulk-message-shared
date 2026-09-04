@@ -14,18 +14,16 @@ import {
   useRef,
   useState,
   type ComponentType,
-  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import {
   AlertTriangle,
-  Check,
-  ChevronDown,
   Eye,
   MessageSquare,
   Pencil,
   Plus,
   RotateCcw,
+  Search,
   Send,
   Smartphone,
   Sparkles,
@@ -45,22 +43,22 @@ import { cn } from "../ui/cn";
 import { BulkMessageManual } from "./BulkMessageManual";
 import { MAX_RECIPIENTS } from "./limits";
 import {
-  PASTE_DEBOUNCE_MS,
   LOADING_TARGETS_HINT,
+  MANAGER_LOCKED_LABEL,
   MANAGER_MINE,
-  PICK_TAB_HINT,
-  STATUS_PLACEHOLDER,
+  SEARCH_PLACEHOLDER,
   canProceedWithTargets,
-  checkedKeysOnLoad,
+  droppedSummary,
+  hiddenPickedCount,
   listFetchDelayMs,
   managerQueryOf,
   managerSelectOptions,
   mergeManagerNames,
-  multiSelectOptionKey,
-  multiSelectTriggerKey,
-  statusTriggerLabel,
+  nextManagerLock,
+  reconcilePicked,
   step1ListPhase,
   uniqueManagers,
+  type PickedDrop,
 } from "./step1-helpers";
 import {
   CONVERT_DEBOUNCE_MS,
@@ -95,6 +93,8 @@ import {
   failureReasonOf,
   progressHeadline,
   restoredJobFromStore,
+  skippedNotice,
+  type SkippedNotice,
 } from "./step3-helpers";
 
 // ────────────────────────────────────────────────────────────── 타입·상수
@@ -106,6 +106,10 @@ interface Target {
   phone: string;
   statuses: string[];
   manager: string;
+  /** 정부지원금 계약정보의 계약일. 이 값이 있는 줄만 서버가 내려 준다. */
+  contractDate: string;
+  /** 정부지원금 환불정보의 환불일. 채워져 있으면 화면이 빨갛게 그린다(진행상태 글자는 안 본다). */
+  refundedAt: string;
   sendable: boolean;
   excludeReason: string;
 }
@@ -139,13 +143,6 @@ interface Progress {
 }
 
 type Step = 1 | 2 | 3;
-type TabMode = "filter" | "pick" | "paste";
-
-const TABS: Array<{ id: TabMode; label: string }> = [
-  { id: "filter", label: "조건으로 찾기" },
-  { id: "pick", label: "목록에서 고르기" },
-  { id: "paste", label: "번호 붙여넣기" },
-];
 
 /** 서버(checks.ts findNeedsFill)와 같은 규칙 — 담당자가 직접 고친 글도 화면에서 바로 다시 센다. */
 const NEEDS_FILL_RE = /\[확인 필요[^\]]*\]/g;
@@ -161,9 +158,9 @@ const COST_MAX = 28;
 /**
  * 화면에 쓸 연락처.
  *
- * ★목록에서 고른 줄(rowId 있음)의 번호는 **서버가 이미 가려서**(010-2•••-4567) 내려 준다 —
+ * ★목록 줄(rowId 있음)의 번호는 **서버가 이미 가려서**(010-2•••-4567) 내려 준다 —
  *  화면은 원문을 아예 받지 않는다. 발송할 때 서버가 rowId 로 원문을 다시 찾아 쓴다.
- *  붙여넣기 줄은 사용자가 방금 직접 적은 번호라 그대로 보여 준다(안 그러면 확인이 안 된다).
+ *  rowId 가 없는 줄은 지금 통로에는 없지만(붙여넣기 폐지), 옛 응답이 섞여 와도 안 깨지게 남겨 둔다.
  */
 function displayPhone(t: { rowId: string; phone: string }): string {
   if (t.rowId) return t.phone || "—";
@@ -310,231 +307,6 @@ function SectionHead({
   );
 }
 
-/** 진행상태 멀티선택 — CustomSelect 는 단일이라 이 화면에만 둔다. 브라우저 <select> 금지. */
-/** 진행상태 → 점 색. 표의 진행상태 배지와 같은 뜻을 같은 색으로 준다(정본: 색 3톤 절제). */
-function statusDotClass(status: string): string {
-  if (/계약완료|입금완료|정산완료|완료/.test(status)) return "bg-wedly-green";
-  if (/불가|취하|보류|환불|중단/.test(status)) return "bg-wedly-red";
-  if (/대기|예정/.test(status)) return "bg-wedly-gold-ink";
-  return "bg-wedly-accent";
-}
-
-function MultiCheckSelect({
-  id,
-  values,
-  onChange,
-  options,
-  placeholder,
-  "aria-label": ariaLabel,
-}: {
-  id?: string;
-  values: string[];
-  onChange: (next: string[]) => void;
-  options: Array<{ value: string; label: string }>;
-  placeholder: string;
-  "aria-label"?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(-1);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLDivElement>(null);
-  const optionRefs = useRef<Array<HTMLLIElement | null>>([]);
-  const optId = (i: number) => `${id ?? "bm-ms"}-opt-${i}`;
-
-  const close = useCallback(() => {
-    setOpen(false);
-    setHighlight(-1);
-    triggerRef.current?.focus();
-  }, []);
-
-  const toggle = useCallback((v: string) => {
-    onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v]);
-  }, [onChange, values]);
-
-  const focusOption = (index: number) => {
-    const i = Math.max(0, Math.min(index, Math.max(0, options.length - 1)));
-    setHighlight(i);
-    optionRefs.current[i]?.focus();
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setOpen(false);
-        setHighlight(-1);
-      }
-    };
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-      }
-      if (e.key === "Tab") {
-        setOpen(false);
-        setHighlight(-1);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, close]);
-
-  const applyAction = (action: ReturnType<typeof multiSelectTriggerKey>, currentValue?: string) => {
-    if (action.type === "none") return;
-    if (action.type === "open") {
-      setOpen(true);
-      const i = action.index;
-      setHighlight(i);
-      requestAnimationFrame(() => optionRefs.current[i]?.focus());
-      return;
-    }
-    if (action.type === "close") {
-      close();
-      return;
-    }
-    if (action.type === "move") {
-      if (!open) setOpen(true);
-      focusOption(action.index);
-      return;
-    }
-    const v = currentValue ?? options[highlight]?.value;
-    if (v) toggle(v);
-  };
-
-  const onTriggerKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const action = multiSelectTriggerKey(e.key, open, highlight, options.length);
-    if (action.type === "none") return;
-    e.preventDefault();
-    applyAction(action);
-  };
-
-  const onOptionKeyDown = (e: KeyboardEvent<HTMLLIElement>, index: number, value: string) => {
-    const action = multiSelectOptionKey(e.key, index, options.length);
-    if (action.type === "none") return;
-    e.preventDefault();
-    e.stopPropagation();
-    applyAction(action, value);
-  };
-
-  return (
-    <div ref={rootRef} className="relative w-full min-w-[220px] shrink-0 sm:w-[280px]">
-      <div
-        ref={triggerRef}
-        id={id}
-        role="button"
-        tabIndex={0}
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? `${id ?? "bm-ms"}-list` : undefined}
-        aria-activedescendant={open && highlight >= 0 ? optId(highlight) : undefined}
-        onClick={() => {
-          setOpen((o) => {
-            const next = !o;
-            setHighlight(next ? 0 : -1);
-            return next;
-          });
-        }}
-        onKeyDown={onTriggerKeyDown}
-        className={cn(
-          // 알약(rounded-full) — 같은 줄의 탭·칩·배지와 한 언어로 맞춘다(2026-09-02 사장님 지시).
-          "flex min-h-[42px] w-full cursor-pointer flex-wrap items-center gap-1.5 rounded-full border border-wedly-bd bg-white py-2 pl-4 pr-8 text-left text-sm",
-          "transition-colors duration-150 ease-out",
-          "hover:border-wedly-accent/50",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wedly-accent focus-visible:ring-offset-2",
-        )}
-      >
-        <span className="sr-only">{values.length ? `선택됨: ${statusTriggerLabel(values)}` : placeholder}</span>
-        {values.length === 0 ? (
-          <span aria-hidden className="text-wedly-muted">{placeholder}</span>
-        ) : (
-          values.map((v) => (
-            <span
-              key={v}
-              aria-hidden
-              className="inline-flex items-center gap-1 rounded-full border border-wedly-bd bg-white py-0.5 pl-2 pr-1 text-wedly-hint font-medium text-wedly-t1 shadow-sm"
-            >
-              {/* 정본 딱지 문법 — 흰 칩 + 뜻을 담은 색 점(표의 진행상태 배지와 같은 모양). */}
-              <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(v))} aria-hidden="true" />
-              <span className="break-keep">{v}</span>
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={(e) => { e.stopPropagation(); toggle(v); }}
-                onMouseDown={(e) => e.stopPropagation()}
-                aria-label={`${v} 빼기`}
-                className={cn(
-                  "inline-flex h-4 w-4 items-center justify-center rounded-full text-wedly-muted",
-                  "transition-colors duration-150 ease-out hover:bg-wedly-bg-gray hover:text-wedly-t1",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wedly-accent",
-                )}
-              >
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </span>
-          ))
-        )}
-      </div>
-      <ChevronDown
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute right-3 top-3 h-3.5 w-3.5 text-wedly-muted transition-transform duration-150 ease-out",
-          open && "rotate-180",
-        )}
-      />
-      {open && (
-        <ul
-          id={`${id ?? "bm-ms"}-list`}
-          role="listbox"
-          aria-multiselectable="true"
-          className="absolute z-[100] mt-1 max-h-64 w-full overflow-auto rounded-xl border border-wedly-bd bg-white py-1 shadow-lg"
-        >
-          {options.map((o, i) => {
-            const on = values.includes(o.value);
-            return (
-              <li
-                key={o.value}
-                id={optId(i)}
-                ref={(el) => { optionRefs.current[i] = el; }}
-                role="option"
-                aria-selected={on}
-                tabIndex={highlight === i ? 0 : -1}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => toggle(o.value)}
-                onMouseEnter={() => setHighlight(i)}
-                onKeyDown={(e) => onOptionKeyDown(e, i, o.value)}
-                className={cn(
-                  "flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors duration-150 ease-out",
-                  "focus-visible:outline-none focus-visible:bg-wedly-bg-page",
-                  on
-                    ? "bg-wedly-bg-blue font-medium text-wedly-accent-ink"
-                    : "text-wedly-t1 hover:bg-wedly-bg-page",
-                  highlight === i && !on && "bg-wedly-bg-page",
-                )}
-              >
-                <span
-                  className={cn(
-                    "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                    on ? "border-wedly-accent bg-wedly-accent text-white" : "border-wedly-bd bg-white",
-                  )}
-                  aria-hidden
-                >
-                  {on && <Check className="h-3 w-3" />}
-                </span>
-                <span className="min-w-0 truncate break-keep">{o.label}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 function LoadingStat() {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-wedly-bd bg-white px-4 py-3 shadow-[0_1px_2px_rgba(10,34,68,0.05),0_6px_18px_rgba(10,34,68,0.08)]">
@@ -672,37 +444,39 @@ export default function BulkMessageScreen() {
   }, []);
 
   // ── 1단계: 대상 ──────────────────────────────────────────────
-  const [tab, setTab] = useState<TabMode>("filter");
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
-  const [statuses, setStatuses] = useState<string[]>(["계약완료"]);
-  /** 진행상태 선택지 — 앱마다 분야 정의가 다를 수 있어 서버(대상 조회 응답)가 알려 준다. */
-  const [statusOptions, setStatusOptions] = useState<string[]>(["계약완료"]);
+  // 대상은 「정부지원금 계약일이 적힌 고객」으로 고정 — 탭도 진행상태 칸도 없다(2026-09-04 사장님 확정).
   const [managerFilter, setManagerFilter] = useState(MANAGER_MINE);
   const [knownManagers, setKnownManagers] = useState<string[]>([]);
-  const [pasted, setPasted] = useState("");
+  /**
+   * 파트너 앱(일루아 등)은 서버가 「본인 담당만」으로 못 박는다 — 고르개를 그리면 고를 수 없는
+   * 선택지를 내미는 꼴이다. 그래서 잠긴 표시로 바꾼다.
+   *
+   * ★이 잠금은 **거들 뿐**이다. 실제 방어는 서버에 있다(화면 값을 고쳐도 남의 고객은 안 내려온다).
+   * ★조회가 실패해도 이 값을 false 로 되돌리지 않는다 — 한 번 잠긴 사용자에게 갑자기 고르개가
+   *  나타나면 「고를 수 있나 보다」로 읽는다.
+   */
+  const [lockedToMe, setLockedToMe] = useState(false);
+  const [search, setSearch] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
-  const [checked, setChecked] = useState<Set<string>>(new Set()); // keyOf(줄) 기준
+  /**
+   * 고른 사람 — **줄 정보를 통째로** 담는다.
+   *
+   * ★열쇠만 담으면 안 된다. 검색·담당을 바꾸면 그 줄이 목록에서 사라지는데, 발송 명단을
+   *  「지금 목록 ∩ 고른 열쇠」로 만들면 **안 보이는 사람이 조용히 명단에서 빠진다.**
+   *  줄을 통째로 들고 있으면 화면에서 사라져도 명단은 그대로다.
+   */
+  const [picked, setPicked] = useState<Map<string, Target>>(new Map());
+  /** 조회 응답 안에서 지금 명단을 손보려면 최신 picked 가 필요하다 — 거울 ref 로 읽는다. */
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  /** 방금 조회에서 「보낼 수 없게 바뀌어」 명단에서 자동으로 뺀 사람들. 다음 조회에 다시 계산된다. */
+  const [droppedPicked, setDroppedPicked] = useState<PickedDrop[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(true); // 첫 화면부터 자동 조회
   const [loadedOnce, setLoadedOnce] = useState(false);
-  const [truncatedCount, setTruncatedCount] = useState(0);
-  /** 붙여넣은 번호 중 볼 수 있는 고객 범위 밖이라 서버가 뺀 수(파트너 앱에서만 0 이 아니다). */
-  const [outOfScopeCount, setOutOfScopeCount] = useState(0);
   const [loadError, setLoadError] = useState("");
   const fetchSeq = useRef(0);
 
   const loadListNow = useCallback(async () => {
-    if (statuses.length === 0) {
-      fetchSeq.current += 1;
-      setTargets([]);
-      setChecked(new Set());
-      setTruncatedCount(0);
-      setOutOfScopeCount(0);
-      setLoadedOnce(true);
-      setLoadingTargets(false);
-      setLoadError("");
-      return;
-    }
     const seq = ++fetchSeq.current;
     setLoadingTargets(true);
     setLoadError("");
@@ -710,7 +484,7 @@ export default function BulkMessageScreen() {
       const res = await fetch("/api/bulk-message/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ statuses, ...managerQueryOf(managerFilter) }),
+        body: JSON.stringify({ search, ...managerQueryOf(managerFilter) }),
       });
       const j = await res.json();
       if (seq !== fetchSeq.current) return;
@@ -720,101 +494,36 @@ export default function BulkMessageScreen() {
         ? (j.data.managers as unknown[]).filter((x): x is string => typeof x === "string")
         : uniqueManagers(t);
       setKnownManagers((prev) => mergeManagerNames(prev, incoming));
-      const opts = Array.isArray(j.data?.statusOptions) ? (j.data.statusOptions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      if (opts.length) setStatusOptions(opts);
+      setLockedToMe((prev) => nextManagerLock(prev, { ok: true, lockedToMe: j.data?.lockedToMe }));
       setTargets(t);
-      // 「조건으로 찾기」는 보낼 수 있는 사람을 전부 골라 둔다.
-      // 「목록에서 고르기」는 사람이 직접 고르도록 비워 둔다.
-      setChecked(new Set(checkedKeysOnLoad(tabRef.current, t.map((x) => ({ key: keyOf(x), sendable: x.sendable })))));
-      setTruncatedCount(0);
-      setOutOfScopeCount(0);
+      // ★고른 사람은 검색·담당이 바뀌어도 유지한다 — 찾아서 담고, 또 찾아서 담을 수 있어야 한다.
+      //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**(수신거부·중복 번호)은 자동으로 빼고 알린다.
+      //  판정 규칙은 reconcilePicked 가 혼자 안다(시험이 못을 박아 둔다).
+      const fixed = reconcilePicked(
+        pickedRef.current,
+        t.map((x) => ({ key: keyOf(x), sendable: x.sendable, excludeReason: x.excludeReason })),
+      );
+      setPicked(fixed.picked); // 뺄 사람이 없으면 같은 Map 이라 React 가 다시 그리지 않는다
+      setDroppedPicked(fixed.dropped);
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
       setTargets([]);
-      setChecked(new Set());
-      setTruncatedCount(0);
-      setOutOfScopeCount(0);
+      setDroppedPicked([]);
+      // ★조회 실패로 잠금을 풀지 않는다 — 규칙은 nextManagerLock 이 혼자 안다(시험이 못을 박는다).
+      setLockedToMe((prev) => nextManagerLock(prev, { ok: false }));
       setLoadedOnce(true);
       setLoadError(`대상을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
     } finally {
       if (seq === fetchSeq.current) setLoadingTargets(false);
     }
-  }, [statuses, managerFilter]);
+  }, [search, managerFilter]);
 
-  const loadPasteNow = useCallback(async () => {
-    if (!pasted.trim()) {
-      fetchSeq.current += 1;
-      setTargets([]);
-      setChecked(new Set());
-      setTruncatedCount(0);
-      setOutOfScopeCount(0);
-      setLoadedOnce(false);
-      setLoadingTargets(false);
-      setLoadError("");
-      return;
-    }
-    const seq = ++fetchSeq.current;
-    setLoadingTargets(true);
-    setLoadError("");
-    try {
-      const res = await fetch("/api/bulk-message/targets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pasted }),
-      });
-      const j = await res.json();
-      if (seq !== fetchSeq.current) return;
-      if (!j.success) throw new Error(loadErrorText(j.error, "번호를 확인하지 못했어요."));
-      const t: Target[] = ((j.data?.phones ?? []) as string[]).map((p) => ({
-        rowId: "",
-        companyName: "",
-        representative: "",
-        phone: p,
-        statuses: [],
-        manager: "",
-        sendable: true,
-        excludeReason: "",
-      }));
-      setTargets(t);
-      setChecked(new Set(t.map(keyOf)));
-      setTruncatedCount(Number(j.data.truncatedCount ?? 0));
-      setOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
-      setLoadedOnce(true);
-    } catch (e) {
-      if (seq !== fetchSeq.current) return;
-      setTargets([]);
-      setChecked(new Set());
-      setTruncatedCount(0);
-      setOutOfScopeCount(0);
-      setLoadedOnce(true);
-      setLoadError(`번호를 확인하지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
-    } finally {
-      if (seq === fetchSeq.current) setLoadingTargets(false);
-    }
-  }, [pasted]);
+  const retryLoad = useCallback(() => { void loadListNow(); }, [loadListNow]);
 
-  const retryLoad = useCallback(() => {
-    if (tabRef.current === "paste") void loadPasteNow();
-    else void loadListNow();
-  }, [loadPasteNow, loadListNow]);
-
-  const statusesKey = statuses.join("\0");
   const listQueryKeyRef = useRef<string | null>(null);
-  const listStatusesRef = useRef<string | null>(null);
   const listManagerRef = useRef<string | null>(null);
-
-  const selectTab = useCallback((id: TabMode) => {
-    setTab(id);
-    // 직접 고르는 탭은 조회 응답을 기다리지 않고 바로 체크를 비운다.
-    if (id === "pick") setChecked(new Set());
-    if (id !== "paste") setLoadingTargets(true);
-  }, []);
-
-  const onStatusesChange = useCallback((next: string[]) => {
-    setStatuses(next);
-    setLoadingTargets(true);
-  }, []);
+  const listSearchRef = useRef<string | null>(null);
 
   const onManagerChange = useCallback((value: string) => {
     setManagerFilter(value);
@@ -822,21 +531,15 @@ export default function BulkMessageScreen() {
   }, []);
 
   useEffect(() => {
-    if (tab === "paste") return;
-    fetchSeq.current += 1; // 탭 전환·조건 변경 시 이전 조회 응답은 버린다
-    if (tab === "pick") setChecked(new Set());
+    fetchSeq.current += 1; // 담당·검색이 바뀌면 이전 조회 응답은 버린다
     const delay = listFetchDelayMs({
       hadListQuery: listQueryKeyRef.current !== null,
-      statusesChanged: listStatusesRef.current !== null && listStatusesRef.current !== statusesKey,
       managerChanged: listManagerRef.current !== null && listManagerRef.current !== managerFilter,
+      searchChanged: listSearchRef.current !== null && listSearchRef.current !== search,
     });
-    listQueryKeyRef.current = `${tab}\0${statusesKey}\0${managerFilter}`;
-    listStatusesRef.current = statusesKey;
+    listQueryKeyRef.current = `${managerFilter}\0${search}`;
     listManagerRef.current = managerFilter;
-    if (statuses.length === 0) {
-      void loadListNow();
-      return;
-    }
+    listSearchRef.current = search;
     if (delay === 0) {
       void loadListNow();
       return;
@@ -844,19 +547,7 @@ export default function BulkMessageScreen() {
     setLoadingTargets(true);
     const timer = setTimeout(() => { void loadListNow(); }, delay);
     return () => clearTimeout(timer);
-  }, [tab, loadListNow, statuses.length, statusesKey, managerFilter]);
-
-  useEffect(() => {
-    if (tab !== "paste") return;
-    fetchSeq.current += 1;
-    if (!pasted.trim()) {
-      void loadPasteNow();
-      return;
-    }
-    setLoadingTargets(true);
-    const timer = setTimeout(() => { void loadPasteNow(); }, PASTE_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [tab, pasted, loadPasteNow]);
+  }, [loadListNow, managerFilter, search]);
 
   // 담당 필터는 서버 조회 파라미터 — 화면에서 한 번 더 거르지 않는다.
   const visibleTargets = targets;
@@ -868,37 +559,38 @@ export default function BulkMessageScreen() {
     return [...by.entries()].map(([k, v]) => `${k} ${v}`).join(" / ");
   }, [excluded]);
 
-  const selected = useMemo(
-    () => visibleTargets.filter((t) => t.sendable && checked.has(keyOf(t))),
-    [visibleTargets, checked],
-  );
+  // ★발송 명단은 「지금 목록 ∩ 고른 열쇠」가 아니라 picked 그 자체다 —
+  //  검색·담당을 바꿔 화면에서 사라진 사람도 명단에 그대로 남아야 한다.
+  const selected = useMemo(() => [...picked.values()], [picked]);
   const selectedCount = selected.length;
   const tooMany = selectedCount > MAX_RECIPIENTS;
-  const allChecked = sendableTargets.length > 0 && sendableTargets.every((t) => checked.has(keyOf(t)));
+  const visibleKeys = useMemo(() => sendableTargets.map(keyOf), [sendableTargets]);
+  const allChecked = visibleKeys.length > 0 && visibleKeys.every((k) => picked.has(k));
+  const hiddenPicked = useMemo(
+    () => hiddenPickedCount([...picked.keys()], visibleKeys),
+    [picked, visibleKeys],
+  );
   const managerOptions = useMemo(() => managerSelectOptions(knownManagers), [knownManagers]);
 
-  const toggleOne = useCallback((key: string) => {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+  const toggleOne = useCallback((row: Target) => {
+    setPicked((prev) => {
+      const next = new Map(prev);
+      const k = keyOf(row);
+      if (next.has(k)) next.delete(k);
+      else next.set(k, row);
       return next;
     });
   }, []);
 
   const toggleAll = useCallback(() => {
-    setChecked((prev) => {
-      const keys = sendableTargets.map(keyOf);
-      const allOn = keys.length > 0 && keys.every((k) => prev.has(k));
-      const next = new Set(prev);
-      if (allOn) {
-        for (const k of keys) next.delete(k);
-      } else {
-        for (const k of keys) next.add(k);
-      }
+    setPicked((prev) => {
+      const next = new Map(prev);
+      const allOn = visibleKeys.length > 0 && visibleKeys.every((k) => next.has(k));
+      if (allOn) for (const k of visibleKeys) next.delete(k);
+      else for (const t of sendableTargets) next.set(keyOf(t), t);
       return next;
     });
-  }, [sendableTargets]);
+  }, [sendableTargets, visibleKeys]);
 
   // ── 2단계: 안내문 ────────────────────────────────────────────
   const [originalText, setOriginalText] = useState("");
@@ -1146,6 +838,11 @@ export default function BulkMessageScreen() {
   const [jobId, setJobId] = useState("");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [pollKey, setPollKey] = useState(0);
+  /**
+   * 발송 통로가 걸러낸 사람 — 사유별 건수(대상 아님 · 번호 없음 · 수신거부 · 중복 번호 · 범위 밖).
+   * ★고른 인원과 실제로 나간 인원이 다른 이유다. 조용히 줄어들면 담당자가 사고로 읽는다.
+   */
+  const [skipped, setSkipped] = useState<SkippedNotice | null>(null);
   /** 서버가 발송 직전에 한 번 더 걸러낸 수신거부 인원 — 화면 목록을 만든 뒤에 차단된 분이 있을 수 있다. */
   const [blockedCount, setBlockedCount] = useState(0);
   /** 발송 직전 서버가 범위 밖으로 뺀 수(파트너 앱). */
@@ -1185,7 +882,7 @@ export default function BulkMessageScreen() {
     try {
       const recipients = selected.map((t) => ({
         // 목록에서 고른 줄은 rowId 만 보낸다 — 화면이 가진 번호는 가려진 것이라 못 쓴다.
-        // 서버가 rowId 로 자료에서 원문을 다시 찾는다. 붙여넣기 줄만 번호를 그대로 보낸다.
+        // 서버가 rowId 로 자료에서 원문을 다시 찾는다(rowId 가 없는 줄은 지금 통로엔 오지 않는다).
         phone: t.rowId ? "" : t.phone,
         companyName: t.companyName,
         representative: t.representative,
@@ -1204,6 +901,8 @@ export default function BulkMessageScreen() {
       try { sessionStorage.setItem(JOB_ID_STORE_KEY, String(j.data.jobId)); } catch { /* 보관함을 못 써도 발송은 돈다 */ }
       // 새 발송은 이 화면에서 대상·안내문을 다 고른 것이라 확인 표를 그대로 그린다.
       setRestoredFromStore(false);
+      // 옛 응답에는 skipped 가 없다 → null 이면 아래 두 옛 안내가 대신 뜬다.
+      setSkipped(skippedNotice(j.data?.skipped));
       setBlockedCount(Number(j.data.blockedCount ?? 0));
       setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
       setPollError("");
@@ -1356,10 +1055,6 @@ export default function BulkMessageScreen() {
   }, [view]);
 
   // ── 그리기 ──────────────────────────────────────────────────
-  const statusSelectOptions = useMemo(
-    () => statusOptions.map((s) => ({ value: s, label: s })),
-    [statusOptions],
-  );
   const noticeCategoryOptions = useMemo(
     () => NOTICE_CATEGORIES.map((c) => ({ value: c, label: c })),
     [],
@@ -1415,66 +1110,19 @@ export default function BulkMessageScreen() {
             tone="accent"
             icon={Users}
             title="받을 분 고르기"
-            desc="조건을 고르면 대상이 자동으로 올라와요. 빼고 싶은 분만 체크를 끄세요"
+            desc="계약일이 적힌 고객이 자동으로 올라와요. 보낼 분을 체크해 주세요"
           />
 
-          <div className="mb-4 inline-flex gap-1 rounded-full bg-wedly-bg-gray p-1">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => selectTab(t.id)}
-                aria-pressed={tab === t.id}
-                className={cn(
-                  "rounded-full px-4 py-1.5 text-wedly-tablehead transition-colors duration-150 ease-out",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wedly-accent focus-visible:ring-offset-2",
-                  tab === t.id
-                    ? "bg-white font-semibold text-wedly-accent-ink shadow-sm"
-                    : "font-medium text-wedly-t2 hover:bg-white/60",
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {tab === "pick" && (
-            <p className="-mt-2 mb-4 text-wedly-hint text-wedly-muted break-keep">{PICK_TAB_HINT}</p>
-          )}
-
-          {tab === "paste" ? (
-            <div className="mb-4">
-              <label htmlFor="bm-paste" className="mb-1 block text-wedly-label font-semibold text-wedly-muted">
-                휴대폰 번호 붙여넣기
-              </label>
-              <Textarea
-                id="bm-paste"
-                autosize={false}
-                rows={6}
-                value={pasted}
-                onChange={(e) => setPasted(e.target.value)}
-                placeholder={"엑셀에서 복사한 번호를 그대로 붙여넣어 주세요.\n예) 010-1234-5678, 01098765432 …"}
-                className="min-h-[120px] w-full"
-              />
-              <p className="mt-1.5 text-wedly-hint text-wedly-muted break-keep">
-                붙여넣으면 자동으로 휴대폰 번호만 골라내고 중복은 지웁니다(최대 {MAX_RECIPIENTS}개). 줄바꿈·쉼표·공백 어떤 형태든 됩니다.
-              </p>
-            </div>
-          ) : (
-            <div className="mb-4 flex flex-wrap items-start gap-3">
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            {/* ★화면의 잠금은 거들 뿐이다 — 실제 방어는 서버(lockedToMe 를 내려주는 쪽)에 있다. */}
+            {lockedToMe ? (
               <div className="flex min-w-0 flex-col gap-1">
-                <label htmlFor="bm-status" className="text-wedly-label font-semibold text-wedly-muted">
-                  진행상태
-                </label>
-                <MultiCheckSelect
-                  id="bm-status"
-                  aria-label="진행상태"
-                  values={statuses}
-                  onChange={onStatusesChange}
-                  options={statusSelectOptions}
-                  placeholder={STATUS_PLACEHOLDER}
-                />
+                <span className="text-wedly-label font-semibold text-wedly-muted">담당 컨설턴트</span>
+                <div className="flex h-10 items-center rounded-full border border-wedly-bd bg-wedly-bg-gray px-4 text-wedly-sub text-wedly-t2">
+                  {MANAGER_LOCKED_LABEL}
+                </div>
               </div>
-
+            ) : (
               <div className="flex min-w-0 flex-col gap-1">
                 <label htmlFor="bm-manager" className="text-wedly-label font-semibold text-wedly-muted">
                   담당 컨설턴트
@@ -1485,24 +1133,45 @@ export default function BulkMessageScreen() {
                   value={managerFilter}
                   onChange={onManagerChange}
                   options={managerOptions}
-                  // 알약 — 옆의 진행상태 상자와 같은 모양으로(공용 부품은 안 건드리고 이 화면만).
-                  className="w-[180px] [&>button]:rounded-full [&>button]:pl-4"
+                  // 알약 — 옆의 검색 칸과 같은 모양으로(공용 부품은 안 건드리고 이 화면만).
+                  className="w-[200px] [&>button]:rounded-full [&>button]:pl-4"
                 />
               </div>
+            )}
+
+            <div className="flex min-w-0 flex-1 basis-[240px] flex-col gap-1">
+              <label htmlFor="bm-search" className="text-wedly-label font-semibold text-wedly-muted">
+                상호명 · 대표자명 · 연락처 검색
+              </label>
+              <div className="flex h-10 items-center gap-2 rounded-full border border-wedly-bd bg-white px-4 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-wedly-accent">
+                <Search className="h-4 w-4 shrink-0 text-wedly-muted" aria-hidden />
+                <input
+                  id="bm-search"
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={SEARCH_PLACEHOLDER}
+                  autoComplete="off"
+                  className="min-w-0 flex-1 border-0 bg-transparent p-0 text-wedly-sub text-wedly-t1 outline-none placeholder:text-wedly-muted"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    aria-label="검색어 지우기"
+                    className="shrink-0 rounded-full p-0.5 text-wedly-muted transition-colors duration-150 ease-out hover:text-wedly-t1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-wedly-accent"
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </button>
+                )}
+              </div>
             </div>
-          )}
+          </div>
 
-          {outOfScopeCount > 0 && (
-            <StatusBox tone="warning" title={`번호 ${won(outOfScopeCount)}개는 볼 수 있는 고객 범위 밖이라 뺐어요`} className="mb-4">
-              이 앱에서 볼 수 있는 정부지원금 고객의 번호만 보낼 수 있어요. 나머지 번호는 담당자에게 문의해 주세요.
-            </StatusBox>
-          )}
-
-          {truncatedCount > 0 && (
-            <StatusBox tone="warning" title={`번호 ${won(truncatedCount)}개는 목록에서 잘렸어요`} className="mb-4">
-              한 번에 {won(MAX_RECIPIENTS)}개까지만 다룰 수 있어서 앞 {won(MAX_RECIPIENTS)}개만 남겼습니다. 나머지는 이번 발송이 끝난 뒤 따로 보내 주세요.
-            </StatusBox>
-          )}
+          <p className="-mt-2 mb-4 text-wedly-hint text-wedly-muted break-keep">
+            상세창 계약정보에 <b className="font-semibold text-wedly-t1">계약일이 적힌 고객만</b> 올라옵니다.
+            회사명·대표자명은 일부만 쳐도 찾아지고, 연락처는 뒷자리 네 개나 전체 번호 모두 됩니다.
+          </p>
 
           {listPhase === "error" && (
             <StatusBox tone="error" title="목록을 불러오지 못했어요" className="mb-4">
@@ -1517,6 +1186,16 @@ export default function BulkMessageScreen() {
           )}
 
           {listPhase !== "error" && (<>
+          {droppedPicked.length > 0 && (
+            <StatusBox
+              tone="warning"
+              title={`${won(droppedPicked.length)}명은 고른 명단에서 자동으로 뺐어요`}
+              className="mb-4"
+            >
+              보낼 수 없게 바뀐 분이라 뺐습니다 — {droppedSummary(droppedPicked)}. 표에는 그대로 남아 있지만 체크가 잠깁니다.
+            </StatusBox>
+          )}
+
           <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-busy={loadingTargets}>
             {loadingTargets ? (
               <>
@@ -1528,7 +1207,7 @@ export default function BulkMessageScreen() {
               <>
                 <StatCard
                   icon={Users}
-                  label={tab === "paste" ? "붙여넣은 번호" : "조건에 잡힌 고객"}
+                  label={search.trim() ? "검색에 걸린 고객" : "계약한 고객"}
                   value={`${won(visibleTargets.length)}명`}
                 />
                 <StatCard icon={UserCheck} label="발송 가능" value={`${won(sendableTargets.length)}명`} />
@@ -1557,6 +1236,7 @@ export default function BulkMessageScreen() {
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">회사명</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">대표명</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">연락처</th>
+                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">계약일</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">진행상태</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">담당</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">발송</th>
@@ -1565,41 +1245,40 @@ export default function BulkMessageScreen() {
               <tbody>
                 {loadingTargets ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
+                    <td colSpan={8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
                       불러오는 중…
                     </td>
                   </tr>
                 ) : visibleTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
-                      {tab === "paste"
-                        ? (pasted.trim()
-                          ? (outOfScopeCount > 0
-                            ? "붙여넣은 번호가 모두 볼 수 있는 고객 범위 밖이에요."
-                            : "번호로 알아볼 수 있는 고객이 없어요.")
-                          : "번호를 붙여넣으면 자동으로 골라냅니다.")
-                        : statuses.length === 0
-                          ? "진행상태를 한 개 이상 골라 주세요."
-                          : loadedOnce
-                            ? "조건에 맞는 고객이 없어요. 진행상태나 담당 조건을 바꿔 보세요."
-                            : "조건을 고르면 대상이 자동으로 올라와요."}
+                    <td colSpan={8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
+                      {search.trim()
+                        ? "검색어와 맞는 고객이 없어요. 다른 말로 찾아 보세요."
+                        : loadedOnce
+                          ? "이 담당자의 계약 고객이 없어요. 담당을 바꿔 보세요."
+                          : "잠시만요, 대상을 불러오고 있어요."}
                     </td>
                   </tr>
                 ) : (
-                  visibleTargets.map((t, i) => (
+                  visibleTargets.map((t, i) => {
+                    // 환불 판정은 **환불일이 채워졌는지** 하나로 한다(2026-09-04 사장님 확정).
+                    // 진행상태 글자에 「환불」이 있어도 환불일이 비면 빨갛게 하지 않는다 — 실제로 그런 줄이 있다.
+                    const refunded = Boolean(t.refundedAt);
+                    return (
                     <tr
                       key={`${keyOf(t)}-${i}`}
                       className={cn(
                         "border-t border-wedly-bd transition-colors duration-150 ease-out",
                         // 제외 줄은 회색 층 위라 글자를 t2 까지만 낮춘다(muted 는 색 바탕에서 안 읽힌다)
                         t.sendable ? "hover:bg-wedly-bg-page" : "bg-wedly-bg-gray/50 text-wedly-t2",
+                        refunded && t.sendable && "shadow-[inset_3px_0_0_var(--wedly-red)]",
                       )}
                     >
                       <td className="px-3 py-2 align-middle">
                         <Checkbox
-                          checked={t.sendable && checked.has(keyOf(t))}
+                          checked={picked.has(keyOf(t))}
                           disabled={!t.sendable}
-                          onChange={() => toggleOne(keyOf(t))}
+                          onChange={() => toggleOne(t)}
                           aria-label={`${t.companyName || displayPhone(t)} 고르기`}
                         />
                       </td>
@@ -1612,9 +1291,14 @@ export default function BulkMessageScreen() {
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {displayPhone(t)}
                       </td>
+                      <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                        {t.contractDate || "—"}
+                      </td>
                       <td className="px-3 py-2">
-                        {t.statuses.length > 0 ? (
-                          <Badge variant="green">{t.statuses[0]}</Badge>
+                        {refunded ? (
+                          <Badge variant="red">환불 {t.refundedAt}</Badge>
+                        ) : t.statuses.length > 0 ? (
+                          <Badge variant={t.statuses.includes("계약완료") ? "green" : "default"}>{t.statuses[0]}</Badge>
                         ) : (
                           <span className="text-wedly-hint text-wedly-t2">—</span>
                         )}
@@ -1632,7 +1316,8 @@ export default function BulkMessageScreen() {
                         )}
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1647,6 +1332,7 @@ export default function BulkMessageScreen() {
             ) : (
               <span className="text-wedly-hint text-wedly-muted tabular-nums break-keep">
                 지금 고른 사람 <b className="font-semibold text-wedly-t1">{won(selectedCount)}명</b>
+                {hiddenPicked > 0 && `  (그중 ${won(hiddenPicked)}명은 지금 화면에 안 보여요)`}
                 {selectedCount > MAX_RECIPIENTS && ` — 한 번에 ${MAX_RECIPIENTS}명까지만 보낼 수 있어요`}
               </span>
             )}
@@ -1867,15 +1553,11 @@ export default function BulkMessageScreen() {
           <div className="mb-4 overflow-hidden rounded-2xl border border-wedly-bd">
             {[
               {
+                // ★자동 제외 건수를 여기 붙이지 마라 — 그 숫자는 「지금 1단계에 보이는 목록」에서
+                //  세는 값이라 검색어만 바꿔도 발송 확인 화면의 숫자가 흔들린다. 보낼 명단과
+                //  관계없는 숫자가 발송 직전에 움직이면 사람이 오해한다(자동 제외는 1단계 숫자 카드 몫).
                 k: "받는 사람",
-                v: (
-                  <>
-                    <b className="font-semibold tabular-nums">{won(selectedCount)}명</b>
-                    {excluded.length > 0 && (
-                      <span className="text-wedly-muted"> ({excludeSummary} 자동 제외)</span>
-                    )}
-                  </>
-                ),
+                v: <b className="font-semibold tabular-nums">{won(selectedCount)}명</b>,
               },
               { k: "보내는 이름", v: <>위들리 <span className="text-wedly-muted">— 채널톡 공식 채널</span></> },
               { k: "고객이 받는 방법", v: <>카카오톡 알림 「새로운 메시지가 도착했어요」 → 누르면 채팅방에서 안내문 확인</> },
@@ -1958,6 +1640,16 @@ export default function BulkMessageScreen() {
             </div>
           ) : (
             <div className="mt-4 space-y-3">
+              {/* ★고른 인원과 실제로 나간 인원이 다른 이유 — 진행 표보다 위에 둔다(놓치면 사고로 읽는다). */}
+              {skipped && (
+                <StatusBox
+                  tone="warning"
+                  title={`고른 ${won(selectedCount)}명 중 ${won(skipped.total)}명은 보내지 않았어요`}
+                >
+                  {skipped.text} — 발송 직전에 서버가 다시 확인해 걸러낸 분들이에요.
+                </StatusBox>
+              )}
+
               <div className="rounded-2xl border border-wedly-bd bg-white p-4 shadow-[0_1px_2px_rgba(10,34,68,0.05),0_6px_18px_rgba(10,34,68,0.08)]">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="text-wedly-sub font-semibold text-wedly-t1">
@@ -1976,12 +1668,15 @@ export default function BulkMessageScreen() {
                   <Badge variant="red">실패 {won(progress?.failed ?? 0)}</Badge>
                   <Badge variant="default">남음 {won(pending)}</Badge>
                 </div>
-                {blockedCount > 0 && (
+                {/* ★위 상자가 같은 사실을 이미 말한다 — 새 응답에서는 이 두 줄을 그리지 않는다.
+                    같은 뜻을 두 모양으로 그리면 담당자가 두 번 빠진 것으로 읽는다.
+                    skipped 를 안 주던 옛 응답에서만 이 자리가 산다. */}
+                {!skipped && blockedCount > 0 && (
                   <p className="mt-2.5 border-t border-wedly-bd pt-2.5 text-wedly-hint text-wedly-t2 break-keep">
                     수신거부 {won(blockedCount)}명은 서버에서 제외됐습니다 — 목록을 만든 뒤에 수신거부한 분이라 발송 대상에서 빠졌어요.
                   </p>
                 )}
-                {sendOutOfScopeCount > 0 && (
+                {!skipped && sendOutOfScopeCount > 0 && (
                   <p className="mt-2.5 border-t border-wedly-bd pt-2.5 text-wedly-hint text-wedly-t2 break-keep">
                     범위 밖 {won(sendOutOfScopeCount)}명은 서버에서 제외됐습니다 — 이 앱에서 볼 수 있는 고객이 아니라 발송 대상에서 빠졌어요.
                   </p>

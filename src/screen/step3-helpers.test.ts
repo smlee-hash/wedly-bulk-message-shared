@@ -10,7 +10,9 @@ import {
   failureReasonOf,
   progressHeadline,
   restoredJobFromStore,
+  skippedNotice,
 } from "./step3-helpers";
+import { droppedSummary } from "./step1-helpers";
 
 describe("새로고침 뒤 되살리기", () => {
   it("보관값이 있으면 되살리고, 진행을 못 받은 동안 머리글은 「불러오는 중」", () => {
@@ -120,5 +122,67 @@ describe("failureReasonOf", () => {
   it("성공·대기는 「—」", () => {
     expect(failureReasonOf({ status: "sent", error: "", alimtalkStatus: "sent" })).toBe("—");
     expect(failureReasonOf({ status: "pending", error: "", alimtalkStatus: "" })).toBe("—");
+  });
+});
+
+describe("skippedNotice — 발송이 걸러낸 사람 알리기", () => {
+  it("사유별 건수를 합계와 한 줄로 만든다", () => {
+    expect(
+      skippedNotice([
+        { reason: "수신거부", count: 1 },
+        { reason: "중복 번호", count: 1 },
+      ]),
+    ).toEqual({ total: 2, text: "수신거부 1 · 중복 번호 1" });
+  });
+
+  it("서버가 준 사유 순서를 그대로 지킨다 — 여기서 다시 정렬하면 앱마다 순서가 달라진다", () => {
+    expect(
+      skippedNotice([
+        { reason: "대상 아님", count: 3 },
+        { reason: "번호 없음", count: 2 },
+        { reason: "범위 밖", count: 1 },
+      ]),
+    ).toEqual({ total: 6, text: "대상 아님 3 · 번호 없음 2 · 범위 밖 1" });
+  });
+
+  it("1단계의 「빠진 사람」 문구와 같은 문법이다 — 같은 뜻을 두 모양으로 그리지 않는다", () => {
+    const step1 = droppedSummary([
+      { key: "a", reason: "수신거부" },
+      { key: "b", reason: "중복 번호" },
+    ]);
+    expect(skippedNotice([
+      { reason: "수신거부", count: 1 },
+      { reason: "중복 번호", count: 1 },
+    ])?.text).toBe(step1);
+  });
+
+  it("옛 응답(값 없음·배열 아님)은 아무것도 안 그린다", () => {
+    expect(skippedNotice(undefined)).toBeNull();
+    expect(skippedNotice(null)).toBeNull();
+    expect(skippedNotice("수신거부 1")).toBeNull();
+    expect(skippedNotice({ reason: "수신거부", count: 1 })).toBeNull();
+  });
+
+  it("걸러진 사람이 없으면 안 그린다 — 0건 사유가 섞여 와도", () => {
+    expect(skippedNotice([])).toBeNull();
+    expect(skippedNotice([{ reason: "수신거부", count: 0 }])).toBeNull();
+    expect(skippedNotice([
+      { reason: "수신거부", count: 0 },
+      { reason: "중복 번호", count: 2 },
+    ])).toEqual({ total: 2, text: "중복 번호 2" });
+  });
+
+  it("망가진 줄은 건너뛰고 나머지는 살린다", () => {
+    expect(
+      skippedNotice([
+        { reason: "", count: 5 },
+        { reason: "수신거부" },
+        { count: 3 },
+        null,
+        "수신거부",
+        { reason: "  범위 밖  ", count: 2 },
+        { reason: "중복 번호", count: "3" },
+      ]),
+    ).toEqual({ total: 2, text: "범위 밖 2" });
   });
 });

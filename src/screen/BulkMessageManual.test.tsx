@@ -67,6 +67,30 @@ describe("사용방법 탭 — 승인 미리보기(가독성 판)의 내용을 �
   });
 });
 
+describe("1단계 개편(2026-09-04) — 탭 3개·진행상태가 사라진 흐름을 설명한다", () => {
+  it("대상 기준이 「계약일」이고 진행상태를 안 본다고 적혀 있다", () => {
+    expect(html).toContain("계약일이 적힌 고객");
+    expect(html).toContain("진행상태는 보지 않습니다");
+  });
+
+  it("검색·선택 유지·환불 빨간 줄을 설명한다", () => {
+    expect(html).toContain("상호명·대표자명·연락처를 한 칸에서 찾습니다");
+    expect(html).toContain("담당이나 검색을 바꿔도 이미 고른 사람은 풀리지 않습니다");
+    expect(html).toContain("환불일이 적힌 고객");
+  });
+
+  it("없어진 탭 3개·붙여넣기 설명이 남아 있지 않다", () => {
+    for (const gone of ["조건으로 찾기", "목록에서 고르기", "번호 붙여넣기", "붙여넣"]) {
+      expect(html, `옛 설명 「${gone}」`).not.toContain(gone);
+    }
+  });
+
+  it("「목록에 없어요」 질문이 계약일 안내로 바뀌었다", () => {
+    expect(html).toContain("계약한 고객인데 목록에 없어요");
+    expect(html).toContain("비어 있으면 올라오지 않습니다");
+  });
+});
+
 describe("가독성 — 사장님 지적(글자가 작다 · 문장이 길게 늘어진다) 반영", () => {
   it("목차 링크 7개가 있다", () => {
     expect(html.match(/href="#/g) ?? []).toHaveLength(7);
@@ -209,6 +233,48 @@ describe("발송하기 / 사용방법 탭", () => {
     expect(src).toContain('scrollIntoView({ block: "start" })');
     expect(src).toContain("cancelAnimationFrame");
     expect(src).toContain('typeof window === "undefined"');
+  });
+
+  it("1단계 화면에서 탭 3개·붙여넣기·진행상태 고르개가 걷혔다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 되살리지 마라 — 대상은 「계약일이 적힌 고객」 하나로 고정됐다(2026-09-04 사장님 확정).
+    for (const gone of ["MultiCheckSelect", "loadPasteNow", "checkedKeysOnLoad", "STATUS_PLACEHOLDER", "번호 붙여넣기"]) {
+      expect(src, `옛 코드 「${gone}」`).not.toContain(gone);
+    }
+    // 고른 사람은 열쇠가 아니라 줄을 통째로 담는다 — 검색으로 좁혀도 명단에서 안 빠지게.
+    expect(src).toContain("useState<Map<string, Target>>");
+    expect(src).toContain("hiddenPickedCount");
+  });
+
+  it("고른 뒤 보낼 수 없게 바뀐 사람은 자동으로 빠지고, 왜 빠졌는지 알린다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    expect(src).toContain("reconcilePicked");
+    expect(src).toContain("droppedSummary(droppedPicked)");
+    expect(src).toContain("고른 명단에서 자동으로 뺐어요");
+  });
+
+  it("3단계 「받는 사람」에 자동 제외 건수를 붙이지 않는다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 그 숫자는 1단계에 보이는 목록에서 세는 값이라 검색어만 바꿔도 흔들린다 — 되살리지 마라.
+    expect(src).not.toContain("자동 제외)");
+  });
+
+  it("파트너 앱 담당 잠금을 서버 값으로 켜고, 조회 실패로 풀지 않는다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 판단은 nextManagerLock 이 혼자 한다 — 화면이 Boolean(...) 으로 직접 정하면 실패 경로에서 잠금이 풀린다.
+    expect(src).toContain("nextManagerLock(prev, { ok: true, lockedToMe: j.data?.lockedToMe })");
+    expect(src).toContain("nextManagerLock(prev, { ok: false })");
+    expect(src).toContain("{MANAGER_LOCKED_LABEL}");
+    expect(src).not.toContain("setLockedToMe(Boolean(");
+  });
+
+  it("발송이 걸러낸 사람을 알리고, 같은 사실을 두 모양으로 그리지 않는다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    expect(src).toContain("skippedNotice(j.data?.skipped)");
+    expect(src).toContain("명은 보내지 않았어요");
+    // 새 응답에서는 옛 두 줄(수신거부 N · 범위 밖 N)을 그리지 않는다 — 두 번 빠진 것으로 읽힌다.
+    expect(src).toContain("{!skipped && blockedCount > 0 && (");
+    expect(src).toContain("{!skipped && sendOutOfScopeCount > 0 && (");
   });
 
   it("판 두 개를 늘 그리고(떼지 않고 숨김) 탭이 판을 가리킨다", () => {

@@ -1,5 +1,7 @@
 /** 알림톡 문안 `#{안내구분}` 에 그대로 들어가는 값. 비면 카카오가 거절할 수 있다. */
 import { isNoticeCategory } from "../rules/notice-category";
+// 사유별 건수 문법(「수신거부 1 · 중복 번호 1」)은 1단계 도우미가 정본이다 — 같은 뜻을 두 모양으로 그리지 않게.
+import { reasonCountsText } from "./step1-helpers";
 export { NOTICE_CATEGORIES, isNoticeCategory } from "../rules/notice-category";
 export type { NoticeCategory } from "../rules/notice-category";
 
@@ -29,6 +31,38 @@ export function restoredJobFromStore(saved: string | null | undefined): { jobId:
 
 /** 되살린 작업이 사라졌을 때(404) 담당자에게 보이는 한 줄 — 그냥 1단계로 돌려보내면 왜 돌아왔는지 모른다. */
 export const JOB_GONE_NOTICE = "이전 발송 기록을 찾을 수 없어 처음부터 시작합니다.";
+
+export interface SkippedNotice {
+  /** 발송 통로가 걸러낸 사람 수 합계. */
+  total: number;
+  /** 「수신거부 1 · 중복 번호 1」 — 1단계와 같은 문법(reasonCountsText). */
+  text: string;
+}
+
+/**
+ * 발송 응답의 `skipped` 를 화면 문구로.
+ *
+ * ★고른 인원과 실제로 나간 인원이 다른 이유를 사람이 알아야 한다 — 조용히 줄어들면 사고로 읽는다.
+ * ★서버가 `skipped` 를 안 주던 **옛 응답도 견딘다** → null 이면 화면은 아무것도 안 그린다.
+ *  사유 순서(대상 아님 · 번호 없음 · 수신거부 · 중복 번호 · 범위 밖)는 서버가 정한 대로 지킨다 —
+ *  여기서 다시 정렬하면 앱마다 다른 순서로 보인다.
+ */
+export function skippedNotice(raw: unknown): SkippedNotice | null {
+  if (!Array.isArray(raw)) return null;
+  const pairs: Array<{ reason: string; count: number }> = [];
+  let total = 0;
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const { reason, count } = item as { reason?: unknown; count?: unknown };
+    if (typeof reason !== "string" || !reason.trim()) continue;
+    const n = typeof count === "number" && Number.isFinite(count) ? Math.trunc(count) : 0;
+    if (n <= 0) continue; // 0건 사유까지 늘어놓으면 「안 빠졌는데 빠졌다」로 읽힌다
+    pairs.push({ reason: reason.trim(), count: n });
+    total += n;
+  }
+  if (total === 0) return null;
+  return { total, text: reasonCountsText(pairs) };
+}
 
 type BadgeVariant = "default" | "blue" | "green" | "red" | "yellow" | "purple";
 

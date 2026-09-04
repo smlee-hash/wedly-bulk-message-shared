@@ -354,7 +354,13 @@ export function BulkMessageManual() {
     desc: string;
     go: NavId;
   }> = [
-    { tone: "blue", icon: Users, title: "1. 받을 분 고르기", desc: "조건·목록·번호 붙여넣기 중 하나", go: "step1" },
+    {
+      tone: "blue",
+      icon: Users,
+      title: "1. 받을 분 고르기",
+      desc: "계약일이 적힌 고객에서 검색해 고르기",
+      go: "step1",
+    },
     {
       tone: "purple",
       icon: MessageSquare,
@@ -427,7 +433,7 @@ export function BulkMessageManual() {
         <section ref={bindSection("overview")} id={domId("overview")} className="grid gap-3.5 scroll-mt-4">
           <div className="grid gap-2.5 rounded-2xl border border-wedly-bd bg-wedly-bg-gray px-5 py-5">
             <p className="text-wedly-page font-bold text-wedly-t1 break-keep">
-              계약완료 고객에게 안내를 한 번에 보냅니다
+              계약일이 적힌 고객에게 안내를 한 번에 보냅니다
             </p>
             <p className="text-sm leading-[22px] text-wedly-t2 break-keep">
               받을 분 고르기 → 안내문 만들기 → 발송 확인. 3단계, 약 3분이면 끝납니다. 고객은 카카오톡 알림을 받고
@@ -480,45 +486,30 @@ export function BulkMessageManual() {
           <SectionHead
             chip="1"
             title="받을 분 고르기"
-            desc="조건을 고르면 대상이 자동으로 올라와요. 빼고 싶은 분만 체크를 끄세요."
+            desc="계약일이 적힌 고객이 자동으로 올라와요. 보낼 분을 체크해 주세요."
           />
           <p className="text-sm font-medium leading-[22px] text-wedly-t1 break-keep">
-            세 가지 방법 중 하나를 고릅니다.
+            탭도 진행상태 칸도 없습니다. 한 화면에서 찾아 고릅니다.
           </p>
           <div className="grid gap-2">
             <Row
-              label="조건으로 찾기"
+              label="받을 분 고르기"
               items={[
                 <>
-                  <K>언제</K> 진행상태 기준으로 여럿에게 보낼 때 (가장 빠름)
+                  <K>누가 올라오나</K> 상세창 「정부지원금 → 계약정보」에 <b className="font-semibold text-wedly-t1">계약일이 적힌 고객</b>.
+                  진행상태는 보지 않습니다
                 </>,
                 <>
-                  <K>어떻게</K> 진행상태(기본 계약완료)와 담당 컨설턴트를 고르면 표가 채워집니다
-                </>,
-              ]}
-            />
-            <Row
-              label="목록에서 고르기"
-              items={[
-                <>
-                  <K>언제</K> 몇 분만 골라 보낼 때
+                  <K>찾기</K> 상호명·대표자명·연락처를 한 칸에서 찾습니다. 연락처는 뒷자리 네 개만 쳐도 됩니다
                 </>,
                 <>
-                  <K>어떻게</K> 회사 목록에서 직접 체크. 표 머리 체크박스는 전체 선택
-                </>,
-              ]}
-            />
-            <Row
-              label="번호 붙여넣기"
-              items={[
-                <>
-                  <K>언제</K> 엑셀 등 다른 자료의 번호로 보낼 때
+                  <K>고르기</K> 처음엔 아무도 체크돼 있지 않습니다. 표 머리 체크는 <b className="font-semibold text-wedly-t1">지금 보이는</b> 사람을 한 번에 켭니다
                 </>,
                 <>
-                  <K>어떻게</K> 번호를 붙여넣으면 고객이 자동으로 짝지어집니다 (최대 {MAX_RECIPIENTS}개)
+                  <K>담아 두기</K> 담당이나 검색을 바꿔도 이미 고른 사람은 풀리지 않습니다
                 </>,
                 <>
-                  <K>주의</K> 등록되지 않은 번호도 「가능」으로 올라옵니다. 파트너 앱은 범위 밖 번호가 빠집니다
+                  <K>빨간 줄</K> 환불일이 적힌 고객입니다. 보낼지 한 번 더 살펴 주세요
                 </>,
               ]}
             />
@@ -529,7 +520,7 @@ export function BulkMessageManual() {
               내 고객(기본) · 전체 · 특정 이름. 프로필에 이름이 없으면 「내 고객」을 고를 수 없어요.
             </InfoCard>
             <InfoCard tone="gray" icon={LayoutGrid} title="숫자 타일 3개" soft>
-              조건에 잡힌 고객 · 발송 가능 · 자동 제외. 제외된 분은 표에 남지만 체크가 잠깁니다.
+              계약한 고객(검색 중에는 「검색에 걸린 고객」) · 발송 가능 · 자동 제외. 제외된 분은 표에 남지만 체크가 잠깁니다.
             </InfoCard>
           </div>
 
@@ -665,9 +656,9 @@ export function BulkMessageManual() {
         <section ref={bindSection("faq")} id={domId("faq")} className="grid gap-3.5 scroll-mt-4">
           <SectionHead chip="?" title="자주 묻는 질문" desc="눌러서 펼치기" />
           <div className="grid gap-2">
-            <Faq q="번호를 붙여넣었는데 표가 비어 있어요">
-              휴대폰 모양 번호가 하나도 없거나(02 유선번호는 안 잡혀요), 파트너 앱에서 전부 범위 밖일 때입니다.
-              하이픈·공백은 있어도 됩니다.
+            <Faq q="계약한 고객인데 목록에 없어요">
+              상세창 「정부지원금 → 계약정보 → 계약일」이 비어 있으면 올라오지 않습니다. 계약일을 채우면 바로
+              보입니다.
             </Faq>
             <Faq q="「시험 발송은 하루 N건까지예요」가 떠요">
               {`하루 ${TEST_SEND_CAP_STAFF}건(파트너 앱 ${TEST_SEND_CAP_PARTNER}건)입니다. 내일 다시 할 수 있고, 실패한 건은 횟수를 돌려줍니다.`}
