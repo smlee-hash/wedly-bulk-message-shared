@@ -188,6 +188,19 @@ describe("skippedNotice — 발송이 걸러낸 사람 알리기", () => {
     expect(skippedNotice([{ reason: "수신거부", count: "-3" }])).toBeNull();
   });
 
+  it("★숫자·글자가 아닌 값은 안 받는다 — Number(true)=1 이 「1명」이라는 거짓 경고가 된다", () => {
+    // 거짓 경고 하나가 뜨면 그것 때문에 진짜 blockedCount 안내까지 숨는다.
+    expect(skippedNotice([{ reason: "수신거부", count: true }])).toBeNull();
+    expect(skippedNotice([{ reason: "수신거부", count: [] }])).toBeNull();
+    expect(skippedNotice([{ reason: "수신거부", count: {} }])).toBeNull();
+    expect(skippedNotice([{ reason: "수신거부", count: null }])).toBeNull();
+    // 망가진 줄만 버리고 멀쩡한 줄은 살린다
+    expect(skippedNotice([
+      { reason: "수신거부", count: true },
+      { reason: "중복 번호", count: 2 },
+    ])).toEqual({ total: 2, text: "중복 번호 2" });
+  });
+
   it("망가진 줄은 건너뛰고 나머지는 살린다", () => {
     expect(
       skippedNotice([

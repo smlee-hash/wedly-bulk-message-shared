@@ -95,12 +95,26 @@ export function reconcilePicked<T extends { sendable: boolean; excludeReason: st
  * ★검색어를 천천히 치면 조회가 여러 번 돈다. 새 응답으로 알림을 통째로 갈아치우면 첫 응답이
  *  알린 「수신거부 1명 빠짐」이 곧바로 지워져 담당자는 인원이 왜 줄었는지 영영 못 본다.
  *  같은 사람이 두 번 빠질 일은 없으니 열쇠로 합친다. 비우는 것은 **사람이 닫거나 발송이 시작될 때**뿐.
+ * ★단 **다시 보낼 수 있게 된 사람은 지운다**(`sendableKeys`). 중복 번호를 고쳐 되살아났는데도
+ *  「명단에서 뺐어요 · 체크가 잠깁니다」가 남아 있으면 그 안내가 거짓말이 된다.
+ *
+ * 바뀐 게 없으면 받은 배열을 그대로 돌려준다 — 화면이 괜히 다시 그려지지 않게.
  */
-export function mergeDropped(prev: PickedDrop[], next: PickedDrop[]): PickedDrop[] {
-  if (next.length === 0) return prev; // 다음 조회가 알림을 지우지 않는다
-  const by = new Map(prev.map((d) => [d.key, d] as const));
+export function mergeDropped(
+  prev: PickedDrop[],
+  next: PickedDrop[],
+  sendableKeys: Iterable<string> = [],
+): PickedDrop[] {
+  const recovered = new Set(sendableKeys);
+  const by = new Map<string, PickedDrop>();
+  for (const d of prev) {
+    if (recovered.has(d.key)) continue; // 되살아난 사람 → 알림에서 지운다
+    by.set(d.key, d);
+  }
   for (const d of next) by.set(d.key, d); // 자리는 그대로 두고 사유만 최신으로
-  return [...by.values()];
+  const out = [...by.values()];
+  if (out.length === prev.length && out.every((d, i) => d === prev[i])) return prev;
+  return out;
 }
 
 /**
@@ -178,15 +192,17 @@ export type ManagerLock = boolean | null;
  *
  * ★조회가 **실패**하면 지금 상태를 그대로 지킨다 — 한 번 잠긴 사용자에게 갑자기 고르개가
  *  나타나면 「고를 수 있나 보다」로 읽는다. 첫 조회가 실패하면 `null`(모름)이 그대로 남아
- *  화면은 고르개 대신 「확인 중」을 그린다. 서버가 값을 안 주는 앱(ERP)은 성공 응답에서
- *  false 가 되어 고르개가 그대로 뜬다.
+ *  화면은 고르개 대신 「확인 중」을 그린다.
+ * ★응답에 **`lockedToMe` 칸이 아예 없으면**(값을 안 주던 옛 서버) 역시 그대로 지킨다.
+ *  `Boolean(data?.lockedToMe)` 로 읽으면 「칸이 없음」과 「false」를 구분하지 못해,
+ *  새 화면이 옛 서버와 만나는 배포 중간에 파트너 사용자에게 「전체」 선택지가 뜬다.
+ *  그래서 `"lockedToMe" in data` 로 **칸의 있고 없음**을 먼저 가른다.
  */
-export function nextManagerLock(
-  prev: ManagerLock,
-  res: { ok: boolean; lockedToMe?: unknown },
-): ManagerLock {
+export function nextManagerLock(prev: ManagerLock, res: { ok: boolean; data?: unknown }): ManagerLock {
   if (!res.ok) return prev;
-  return Boolean(res.lockedToMe);
+  const data = res.data;
+  if (!data || typeof data !== "object" || !("lockedToMe" in data)) return prev;
+  return Boolean((data as { lockedToMe: unknown }).lockedToMe);
 }
 
 /** 담당 자리에 무엇을 그릴지 — 모름이면 고르개를 아예 안 그린다(고를 수 없는 것을 내밀지 않게). */
@@ -205,20 +221,43 @@ export function isRefunded(row: { refundedAt?: string | null }): boolean {
   return Boolean(row.refundedAt && String(row.refundedAt).trim());
 }
 
+/** 한 칸에 늘어놓을 딱지 수 — 넘치면 「+N」으로 접는다(표 칸이 좁다). */
+export const STATUS_BADGES_SHOWN = 2;
+
 /**
- * 표의 진행상태 딱지 — **색과 글자가 같은 값을 본다.**
+ * 표의 진행상태 딱지 — **딱지마다 색과 글자가 같은 값을 본다.**
  *
- * ★예전엔 색은 배열 전체에 「계약완료」가 있는지로 정하고 글자는 첫 값을 그려서,
- *  `["진행중","계약완료"]` 면 **초록색 「진행중」** 이 떴다. 색이 거짓말을 한다.
- *  「계약완료」가 들어 있으면 그 글자를 그린다 — 그 줄이 계약 고객이라는 게 요점이다.
+ * ★두 번 데였다.
+ *  ㉠ 색은 배열 전체에 「계약완료」가 있는지로 정하고 글자는 첫 값을 그려서
+ *     `["진행중","계약완료"]` 가 **초록색 「진행중」** 으로 떴다 — 색이 거짓말.
+ *  ㉡ 그걸 고치며 「계약완료」만 그렸더니, 진행상태가 「환불」인데 환불일은 빈칸인 줄(운영 DB 실측 1건)이
+ *     **빨간 표시도 없고 딱지는 초록 「계약완료」** 라 담당자가 「환불」을 **어디서도 못 봤다.**
+ *  그래서 **원래 들어 있던 상태를 다 보이게** 하되, 딱지 하나하나가 제 글자에 맞는 색을 쓴다.
+ *  계약 고객이라는 게 요점이라 「계약완료」를 앞에 세우고 나머지는 원래 순서대로.
  */
-export function statusBadgeOf(
+export function statusBadgesOf(
   statuses: string[],
-): { label: string; variant: "green" | "default" } | null {
-  const list = statuses.filter((s) => s && s.trim());
-  if (list.length === 0) return null;
-  if (list.some((s) => s.trim() === "계약완료")) return { label: "계약완료", variant: "green" };
-  return { label: list[0].trim(), variant: "default" };
+  maxShown: number = STATUS_BADGES_SHOWN,
+): Array<{ label: string; variant: "green" | "default" }> {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const s of statuses) {
+    const v = (s ?? "").trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    list.push(v);
+  }
+  if (list.length === 0) return [];
+  const ordered = [...list.filter((s) => s === "계약완료"), ...list.filter((s) => s !== "계약완료")];
+  const shown = ordered.slice(0, Math.max(1, maxShown));
+  const badges = shown.map((label) => ({
+    label,
+    // 초록은 오직 「계약완료」 — 딱지의 색과 글자가 어긋나는 짝이 없다.
+    variant: label === "계약완료" ? ("green" as const) : ("default" as const),
+  }));
+  const rest = ordered.length - shown.length;
+  if (rest > 0) badges.push({ label: `+${rest}`, variant: "default" });
+  return badges;
 }
 
 export function managerSelectOptions(

@@ -58,6 +58,9 @@ export function skippedNotice(raw: unknown): SkippedNotice | null {
     if (typeof reason !== "string" || !reason.trim()) continue;
     // ★숫자로 받아 낸다 — 통로가 "2" 처럼 글자로 보내도 경고가 통째로 사라지면 안 된다.
     //  같은 응답의 blockedCount·outOfScopeCount 도 화면이 Number(...) 로 받는다(동작을 맞춘다).
+    // ★단 숫자·글자만 받는다. `Number(true)` 는 1이라, 망가진 값이 「1명」이라는 **실제보다 작은
+    //  거짓 경고**가 되고 그 경고가 옛 blockedCount 안내까지 숨긴다.
+    if (typeof count !== "number" && typeof count !== "string") continue;
     const n = Math.trunc(Number(count));
     if (!Number.isFinite(n) || n <= 0) continue; // 0건 사유까지 늘어놓으면 「안 빠졌는데 빠졌다」로 읽힌다
     pairs.push({ reason: reason.trim(), count: n });

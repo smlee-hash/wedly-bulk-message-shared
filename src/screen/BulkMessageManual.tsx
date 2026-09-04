@@ -658,7 +658,11 @@ export function BulkMessageManual() {
           <div className="grid gap-2">
             <Faq q="계약한 고객인데 목록에 없어요">
               세 가지를 차례로 보세요. <b className="font-semibold text-wedly-t1">첫째</b>, 담당 컨설턴트가
-              「내 고객」으로 되어 있으면 남의 고객은 안 보입니다 — 「전체」로 바꿔 보세요.{" "}
+              「내 고객」으로 되어 있으면 남의 고객은 안 보입니다 — 「전체」로 바꿔 보세요{" "}
+              <span className="text-wedly-muted">
+                (파트너 앱에서는 본인 담당 고객만 보입니다 — 담당이 다른 고객은 관리자에게 문의해 주세요)
+              </span>
+              .{" "}
               <b className="font-semibold text-wedly-t1">둘째</b>, 검색 칸에 글자가 남아 있으면 그 조건에 맞는
               고객만 보입니다 — 검색어를 지워 보세요.{" "}
               <b className="font-semibold text-wedly-t1">셋째</b>, 그래도 없으면 상세창 「정부지원금 → 계약정보

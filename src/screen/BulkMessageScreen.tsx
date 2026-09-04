@@ -60,7 +60,7 @@ import {
   mergeManagerNames,
   nextManagerLock,
   reconcilePicked,
-  statusBadgeOf,
+  statusBadgesOf,
   step1ListPhase,
   uniqueManagers,
   type ManagerLock,
@@ -501,7 +501,8 @@ export default function BulkMessageScreen() {
         ? (j.data.managers as unknown[]).filter((x): x is string => typeof x === "string")
         : uniqueManagers(t);
       setKnownManagers((prev) => mergeManagerNames(prev, incoming));
-      setLockedToMe((prev) => nextManagerLock(prev, { ok: true, lockedToMe: j.data?.lockedToMe }));
+      // ★응답 덩어리를 통째로 넘긴다 — 「lockedToMe 칸이 없음」과 「false」를 함수가 구분해야 한다.
+      setLockedToMe((prev) => nextManagerLock(prev, { ok: true, data: j.data }));
       setTargets(t);
       // ★고른 사람은 검색·담당이 바뀌어도 유지한다 — 찾아서 담고, 또 찾아서 담을 수 있어야 한다.
       //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**(수신거부·중복 번호)은 자동으로 빼고 알린다.
@@ -509,7 +510,9 @@ export default function BulkMessageScreen() {
       const fixed = reconcilePicked(pickedRef.current, t.map((x) => ({ key: keyOf(x), row: x })));
       setPicked(fixed.picked); // 바뀐 게 없으면 같은 Map 이라 React 가 다시 그리지 않는다
       // ★알림은 쌓는다 — 다음 조회가 「누가 왜 빠졌는지」를 지워 버리면 사람이 영영 못 본다.
-      setDroppedPicked((prev) => mergeDropped(prev, fixed.dropped));
+      //  단 다시 보낼 수 있게 된 사람은 지운다(그 줄엔 「체크가 잠깁니다」가 더 이상 사실이 아니다).
+      const sendableNow = t.filter((x) => x.sendable).map(keyOf);
+      setDroppedPicked((prev) => mergeDropped(prev, fixed.dropped, sendableNow));
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
@@ -1287,7 +1290,7 @@ export default function BulkMessageScreen() {
                     // 환불 판정은 **환불일이 채워졌는지** 하나로 한다(2026-09-04 사장님 확정).
                     // 3단계 경고도 같은 함수(isRefunded)를 봐야 표와 경고가 어긋나지 않는다.
                     const refunded = isRefunded(t);
-                    const statusBadge = statusBadgeOf(t.statuses);
+                    const statusBadges = statusBadgesOf(t.statuses);
                     return (
                     <tr
                       key={`${keyOf(t)}-${i}`}
@@ -1321,10 +1324,14 @@ export default function BulkMessageScreen() {
                       <td className="px-3 py-2">
                         {refunded ? (
                           <Badge variant="red">환불 {t.refundedAt}</Badge>
-                        ) : statusBadge ? (
-                          // ★색과 글자는 반드시 같은 값에서 나온다(statusBadgeOf) — 따로 정하면
-                          //  ["진행중","계약완료"] 에서 초록색 「진행중」이 뜬다.
-                          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                        ) : statusBadges.length > 0 ? (
+                          // ★딱지마다 색과 글자가 같은 값에서 나온다(statusBadgesOf). 「계약완료」가 있어도
+                          //  다른 상태를 숨기지 않는다 — 진행상태 「환불」인데 환불일이 빈 줄을 못 보게 된다.
+                          <span className="flex flex-wrap items-center gap-1">
+                            {statusBadges.map((b) => (
+                              <Badge key={b.label} variant={b.variant}>{b.label}</Badge>
+                            ))}
+                          </span>
                         ) : (
                           <span className="text-wedly-hint text-wedly-t2">—</span>
                         )}

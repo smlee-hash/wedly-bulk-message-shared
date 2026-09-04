@@ -89,6 +89,8 @@ describe("1단계 개편(2026-09-04) — 탭 3개·진행상태가 사라진 흐
     expect(html).toContain("계약한 고객인데 목록에 없어요");
     // 계약일만 알려 주면 담당·검색 때문에 안 보이는 사람이 멀쩡한 계약일을 고치러 간다.
     expect(html).toContain("「전체」로 바꿔 보세요");
+    // 파트너 앱에는 「전체」가 없다 — 없는 선택지를 시키면 멀쩡한 계약일을 고치러 간다
+    expect(html).toContain("파트너 앱에서는 본인 담당 고객만 보입니다");
     expect(html).toContain("검색어를 지워 보세요");
     expect(html).toContain("비어 있는 것입니다");
   });
@@ -265,7 +267,9 @@ describe("발송하기 / 사용방법 탭", () => {
   it("파트너 앱 담당 잠금을 서버 값으로 켜고, 조회 실패로 풀지 않는다", () => {
     const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
     // 판단은 nextManagerLock 이 혼자 한다 — 화면이 Boolean(...) 으로 직접 정하면 실패 경로에서 잠금이 풀린다.
-    expect(src).toContain("nextManagerLock(prev, { ok: true, lockedToMe: j.data?.lockedToMe })");
+    // 응답 덩어리를 통째로 넘겨야 「칸이 없음」과 「false」를 함수가 구분한다
+    expect(src).toContain("nextManagerLock(prev, { ok: true, data: j.data })");
+    expect(src).not.toContain("lockedToMe: j.data?.lockedToMe");
     expect(src).toContain("nextManagerLock(prev, { ok: false })");
     expect(src).not.toContain("setLockedToMe(Boolean(");
     // 그릴지 말지도 함수가 정한다 — 「모름」에 고르개가 뜨는 것을 화면이 다시 판단하지 않게

@@ -14,7 +14,7 @@ import {
   managerControl,
   mergeDropped,
   reconcilePicked,
-  statusBadgeOf,
+  statusBadgesOf,
   step1ListPhase,
   listFetchDelayMs,
   managerQueryOf,
@@ -76,21 +76,33 @@ describe("managerQueryOf", () => {
 
 describe("nextManagerLock — 파트너 앱 담당 잠금", () => {
   it("서버가 잠갔다고 하면 잠근다", () => {
-    expect(nextManagerLock(null, { ok: true, lockedToMe: true })).toBe(true);
-    expect(nextManagerLock(false, { ok: true, lockedToMe: true })).toBe(true);
+    expect(nextManagerLock(null, { ok: true, data: { lockedToMe: true } })).toBe(true);
+    expect(nextManagerLock(false, { ok: true, data: { lockedToMe: true } })).toBe(true);
   });
 
-  it("서버가 안 잠갔거나 값을 안 주면(ERP) 고르개를 그린다", () => {
-    expect(nextManagerLock(null, { ok: true, lockedToMe: false })).toBe(false);
-    expect(nextManagerLock(null, { ok: true })).toBe(false);
-    expect(nextManagerLock(true, { ok: true, lockedToMe: false })).toBe(false);
+  it("서버가 「안 잠갔다」고 **말하면** 고르개를 그린다", () => {
+    expect(nextManagerLock(null, { ok: true, data: { lockedToMe: false } })).toBe(false);
+    expect(nextManagerLock(true, { ok: true, data: { lockedToMe: false } })).toBe(false);
+  });
+
+  it("★칸이 아예 없으면(옛 서버) 이전 값을 지킨다 — 배포 중간에 잠금이 풀리면 안 된다", () => {
+    // 잠겨 있었으면 잠긴 채
+    expect(nextManagerLock(true, { ok: true, data: { targets: [], managers: [] } })).toBe(true);
+    // 모름이면 모름 그대로(고르개를 안 그린다)
+    expect(nextManagerLock(null, { ok: true, data: { targets: [] } })).toBeNull();
+    expect(managerControl(nextManagerLock(null, { ok: true, data: {} }))).toBe("loading");
+    // 칸이 있으면 그 값을 그대로 반영한다
+    expect(nextManagerLock(true, { ok: true, data: { lockedToMe: false } })).toBe(false);
+    // 덩어리가 아예 없어도 「모른다」로 본다
+    expect(nextManagerLock(true, { ok: true })).toBe(true);
+    expect(nextManagerLock(true, { ok: true, data: null })).toBe(true);
   });
 
   it("조회가 실패하면 지금 상태를 그대로 지킨다 — 잠긴 사람에게 고르개가 나타나면 안 된다", () => {
     expect(nextManagerLock(true, { ok: false })).toBe(true);
     expect(nextManagerLock(false, { ok: false })).toBe(false);
     // 실패 응답에 값이 섞여 와도 안 믿는다
-    expect(nextManagerLock(true, { ok: false, lockedToMe: false })).toBe(true);
+    expect(nextManagerLock(true, { ok: false, data: { lockedToMe: false } })).toBe(true);
   });
 
   it("★첫 조회가 실패하면 「모름」이 그대로 남는다 — 파트너 앱에 고르개가 뜨면 안 된다", () => {
@@ -289,30 +301,74 @@ describe("mergeDropped — 알림을 쌓는다", () => {
     expect(acc).toHaveLength(2);
     expect(droppedSummary(acc)).toBe("수신거부 1 · 중복 번호 1");
   });
+
+  it("★다시 보낼 수 있게 되면 알림에서 지운다 — 빠짐 → 고쳐짐 → 사라짐", () => {
+    // ㉠ 중복 번호로 빠진다
+    let acc = mergeDropped([], [d("a", "중복 번호")]);
+    expect(droppedSummary(acc)).toBe("중복 번호 1");
+    // ㉡ 번호를 고쳐 다시 보낼 수 있게 됐다(이번 목록에서 sendable)
+    acc = mergeDropped(acc, [], ["a"]);
+    expect(acc).toEqual([]);
+    // ㉢ 「체크가 잠깁니다」가 사실이 아니게 된 알림이 남아 있으면 안 된다
+    expect(droppedSummary(acc)).toBe("");
+  });
+
+  it("되살아난 사람만 지우고 나머지는 남긴다", () => {
+    const acc = mergeDropped([d("a", "수신거부"), d("b", "중복 번호")], [], ["b"]);
+    expect(acc).toEqual([d("a", "수신거부")]);
+  });
+
+  it("지울 것도 더할 것도 없으면 받은 배열을 그대로 돌려준다", () => {
+    const prev = [d("a", "수신거부")];
+    expect(mergeDropped(prev, [])).toBe(prev);
+    expect(mergeDropped(prev, [], ["z"])).toBe(prev);
+    expect(mergeDropped(prev, [d("a", "수신거부")])).not.toBe(prev); // 사유 갱신은 새 배열
+  });
 });
 
-describe("statusBadgeOf — 색과 글자가 같은 값을 본다", () => {
-  it("「계약완료」가 들어 있으면 초록 「계약완료」 — 첫 값이 다른 상태여도", () => {
-    expect(statusBadgeOf(["진행중", "계약완료"])).toEqual({ label: "계약완료", variant: "green" });
-    expect(statusBadgeOf(["계약완료"])).toEqual({ label: "계약완료", variant: "green" });
+describe("statusBadgesOf — 색과 글자가 같은 값을 보고, 다른 상태를 숨기지 않는다", () => {
+  it("★「계약완료」가 있어도 다른 상태를 숨기지 않는다 — 환불일이 빈 「환불」 줄을 못 보면 안 된다", () => {
+    expect(statusBadgesOf(["계약완료", "환불"])).toEqual([
+      { label: "계약완료", variant: "green" },
+      { label: "환불", variant: "default" },
+    ]);
+    // 계약 고객이라는 게 요점이라 「계약완료」가 앞에 선다(원래 순서가 뒤여도)
+    expect(statusBadgesOf(["진행중", "계약완료"])).toEqual([
+      { label: "계약완료", variant: "green" },
+      { label: "진행중", variant: "default" },
+    ]);
   });
 
-  it("없으면 첫 값을 무채색으로 — 초록 「진행중」 같은 거짓말이 안 나오게", () => {
-    expect(statusBadgeOf(["진행중"])).toEqual({ label: "진행중", variant: "default" });
-    expect(statusBadgeOf(["조회완료", "상담중"])).toEqual({ label: "조회완료", variant: "default" });
+  it("하나뿐이면 하나만", () => {
+    expect(statusBadgesOf(["계약완료"])).toEqual([{ label: "계약완료", variant: "green" }]);
+    expect(statusBadgesOf(["진행중"])).toEqual([{ label: "진행중", variant: "default" }]);
   });
 
-  it("빈 값·공백만 있으면 딱지를 안 그린다", () => {
-    expect(statusBadgeOf([])).toBeNull();
-    expect(statusBadgeOf(["", "   "])).toBeNull();
-    expect(statusBadgeOf(["", "계약완료"])).toEqual({ label: "계약완료", variant: "green" });
+  it("많으면 「+N」으로 접는다 — 표 칸이 좁다", () => {
+    expect(statusBadgesOf(["계약완료", "환불", "보류", "상담중"])).toEqual([
+      { label: "계약완료", variant: "green" },
+      { label: "환불", variant: "default" },
+      { label: "+2", variant: "default" },
+    ]);
+    expect(statusBadgesOf(["가", "나", "다"], 1)).toEqual([
+      { label: "가", variant: "default" },
+      { label: "+2", variant: "default" },
+    ]);
   });
 
-  it("초록은 「계약완료」일 때만 — 색과 글자가 어긋나는 짝이 없다", () => {
-    for (const statuses of [["진행중"], ["환불"], ["조회완료", "상담중"], ["계약완료", "환불"]]) {
-      const badge = statusBadgeOf(statuses);
-      if (!badge) continue;
-      expect(badge.variant === "green").toBe(badge.label === "계약완료");
+  it("빈 값·공백·중복은 없앤다", () => {
+    expect(statusBadgesOf([])).toEqual([]);
+    expect(statusBadgesOf(["", "   "])).toEqual([]);
+    expect(statusBadgesOf(["", "계약완료"])).toEqual([{ label: "계약완료", variant: "green" }]);
+    expect(statusBadgesOf(["환불", " 환불 ", "환불"])).toEqual([{ label: "환불", variant: "default" }]);
+  });
+
+  it("초록은 「계약완료」 딱지에만 — 색과 글자가 어긋나는 짝이 하나도 없다", () => {
+    const cases = [["진행중"], ["환불"], ["조회완료", "상담중"], ["계약완료", "환불"], ["계약완료", "가", "나"]];
+    for (const statuses of cases) {
+      for (const badge of statusBadgesOf(statuses)) {
+        expect(badge.variant === "green").toBe(badge.label === "계약완료");
+      }
     }
   });
 });
