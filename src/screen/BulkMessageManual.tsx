@@ -616,7 +616,16 @@ export function BulkMessageManual() {
             <Row label="보내는 이름" items={["항상 위들리(채널톡 공식 채널). 개인 번호로 나가지 않습니다"]} />
             <Row label="고객이 받는 방법" items={["카카오톡 알림 → 누르면 채팅방에서 안내문 확인"]} />
             <Row label="답장 오면" items={["보낸 담당자에게 자동 배정(채널톡 담당자로 등록된 경우)"]} />
-            <Row label="예상 비용" items={["알림 건당 7~28원. 이번 발송의 최대 금액이 함께 보입니다"]} />
+            {/* ★단가 숫자를 여기 적지 마라 — 실제 값은 서버가 목록 응답으로 내려 준다(step3-helpers
+                parsePricing). 이 문서는 정적이라 요금이 바뀌면 매뉴얼만 옛 숫자로 남는다. */}
+            <Row
+              label="예상 비용"
+              items={[
+                "카카오 알림톡 1건 비용이 듭니다(부가세 별도, 도착한 건만 과금)",
+                "문자는 채널톡에 번호가 저장된 분에게만 따로 나갑니다",
+                "이번 발송의 실제 금액은 3단계 「발송 확인」에 나옵니다",
+              ]}
+            />
           </div>
           <div className="grid gap-2.5 md:grid-cols-2">
             <InfoCard tone="gold" icon={Tag} title="안내 내용은 필수">

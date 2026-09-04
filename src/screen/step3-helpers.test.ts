@@ -3,11 +3,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALIMTALK_REASON_MISSING,
+  DEFAULT_PRICING,
   NOTICE_CATEGORIES,
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
+  estimateCost,
   failureReasonOf,
+  parsePricing,
   progressHeadline,
   refundedNotice,
   restoredJobFromStore,
@@ -262,5 +265,80 @@ describe("refundedNotice — 고른 명단에 섞인 환불 고객", () => {
   it("환불 고객이 없으면 아무것도 안 그린다", () => {
     expect(refundedNotice([])).toBeNull();
     expect(refundedNotice([row("가나다"), row("라마바", "   ")])).toBeNull();
+  });
+});
+
+describe("parsePricing", () => {
+  it("서버가 준 단가를 그대로 쓴다", () => {
+    expect(parsePricing({ alimtalkWon: 5, smsMaxWon: 28 })).toEqual({ alimtalkWon: 5, smsMaxWon: 28 });
+    expect(parsePricing({ alimtalkWon: 6.5, smsMaxWon: 30 })).toEqual({ alimtalkWon: 6.5, smsMaxWon: 30 });
+  });
+
+  it("칸이 아예 없어도(옛 서버) 기본값으로 돈다", () => {
+    expect(parsePricing(undefined)).toEqual(DEFAULT_PRICING);
+    expect(parsePricing(null)).toEqual(DEFAULT_PRICING);
+    expect(parsePricing({})).toEqual(DEFAULT_PRICING);
+    expect(parsePricing("5원")).toEqual(DEFAULT_PRICING);
+    expect(parsePricing(5)).toEqual(DEFAULT_PRICING);
+    expect(parsePricing([])).toEqual(DEFAULT_PRICING);
+  });
+
+  it("이상한 값은 그 칸만 접는다 — 멀쩡한 칸까지 되돌리지 않는다", () => {
+    // 글자·음수·0·NaN·Infinity 는 단가가 될 수 없다
+    expect(parsePricing({ alimtalkWon: "5", smsMaxWon: 30 })).toEqual({ alimtalkWon: 5, smsMaxWon: 30 });
+    expect(parsePricing({ alimtalkWon: -1, smsMaxWon: 30 })).toEqual({ alimtalkWon: 5, smsMaxWon: 30 });
+    expect(parsePricing({ alimtalkWon: 0, smsMaxWon: 30 })).toEqual({ alimtalkWon: 5, smsMaxWon: 30 });
+    expect(parsePricing({ alimtalkWon: Number.NaN, smsMaxWon: 30 })).toEqual({ alimtalkWon: 5, smsMaxWon: 30 });
+    expect(parsePricing({ alimtalkWon: Number.POSITIVE_INFINITY, smsMaxWon: 30 })).toEqual({
+      alimtalkWon: 5,
+      smsMaxWon: 30,
+    });
+    expect(parsePricing({ alimtalkWon: 7, smsMaxWon: null })).toEqual({ alimtalkWon: 7, smsMaxWon: 28 });
+    expect(parsePricing({ alimtalkWon: 7, smsMaxWon: true })).toEqual({ alimtalkWon: 7, smsMaxWon: 28 });
+  });
+
+  it("기본값 자체는 오염되지 않는다 — 받은 값을 고쳐도 다음 조회가 멀쩡해야 한다", () => {
+    const got = parsePricing(undefined);
+    got.alimtalkWon = 999;
+    expect(DEFAULT_PRICING.alimtalkWon).toBe(5);
+    expect(parsePricing(undefined).alimtalkWon).toBe(5);
+  });
+});
+
+describe("estimateCost", () => {
+  it("인원 × 단가 — 알림톡은 전원, 문자는 최대치", () => {
+    expect(estimateCost(1, DEFAULT_PRICING)).toEqual({ alimtalk: 5, smsMax: 28 });
+    expect(estimateCost(500, DEFAULT_PRICING)).toEqual({ alimtalk: 2500, smsMax: 14000 });
+    expect(estimateCost(3, { alimtalkWon: 5, smsMaxWon: 28 })).toEqual({ alimtalk: 15, smsMax: 84 });
+  });
+
+  it("아직 아무도 안 골랐거나 인원이 이상하면 0 — 「약 NaN원」을 그리지 않는다", () => {
+    expect(estimateCost(0, DEFAULT_PRICING)).toEqual({ alimtalk: 0, smsMax: 0 });
+    expect(estimateCost(-5, DEFAULT_PRICING)).toEqual({ alimtalk: 0, smsMax: 0 });
+    expect(estimateCost(1.5, DEFAULT_PRICING)).toEqual({ alimtalk: 0, smsMax: 0 });
+    expect(estimateCost(Number.NaN, DEFAULT_PRICING)).toEqual({ alimtalk: 0, smsMax: 0 });
+    expect(estimateCost(Number.POSITIVE_INFINITY, DEFAULT_PRICING)).toEqual({ alimtalk: 0, smsMax: 0 });
+  });
+
+  it("소수 단가는 반올림해서 보여 준다", () => {
+    expect(estimateCost(3, { alimtalkWon: 5.5, smsMaxWon: 27.4 })).toEqual({ alimtalk: 17, smsMax: 82 });
+  });
+
+  it("화면 배선까지 본다 — 판단만 맞고 화면이 옛 상수를 쓰면 금액이 그대로다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 단가는 응답에 **객체로 실려 있을 때만** 갱신한다 — 없으면 직전 값을 그대로 둔다.
+    // (배포 교체 중 옛 서버에 걸린 재조회 한 번에 화면 단가가 기본값으로 되돌아가면 안 된다.)
+    expect(src).toContain('if (rawPricing && typeof rawPricing === "object") setPricing(parsePricing(rawPricing));');
+    expect(src).not.toContain("setPricing(parsePricing(j.data?.pricing))");
+    expect(src).toContain("estimateCost(selectedCount, pricing)");
+    // 옛 단가 상수는 남아 있으면 안 된다
+    expect(src).not.toContain("COST_MAX");
+    expect(src).not.toContain("COST_MIN");
+    // 3단계 표와 발송 확인 모달이 같은 값을 쓴다
+    expect(src).toContain("won(cost.alimtalk)");
+    expect(src).toContain("won(cost.smsMax)");
+    // 시험 발송은 알림톡 기준 문구 + 안내 내용을 함께 보낸다
+    expect(src).toContain("phone: testPhone, noticeCategory");
+    expect(src).toContain("보냈어요. 카카오톡 알림톡을 확인해 주세요.");
   });
 });

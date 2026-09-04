@@ -6,6 +6,15 @@ import { isRefunded, reasonCountsText } from "./step1-helpers";
 export { NOTICE_CATEGORIES, isNoticeCategory } from "../rules/notice-category";
 export type { NoticeCategory } from "../rules/notice-category";
 
+/**
+ * 안내구분을 **안 골랐을 때 서버가 대신 붙이는** 글자 — 화면은 보여 주기만 한다.
+ *
+ * ★화면이 이 값을 실어 보내지 않는다. 서버 규칙은 「빈 값이면 서버가 기본값을 붙이고,
+ *  목록에 없는 값이면 거절」이라 화면이 지어내 보내면 시험 발송이 통째로 거절된다
+ *  (이 글자는 NOTICE_CATEGORIES 에 없다 — 그래서 고르개에도 안 나온다).
+ */
+export const DEFAULT_NOTICE_CATEGORY_LABEL = "진행 상황 안내";
+
 export function canConfirmSend(opts: {
   targetsOk: boolean;
   tooMany: boolean;
@@ -107,6 +116,59 @@ export function refundedNotice(
         ? `${names.join(" · ")} 외 ${rest}곳`
         : names.join(" · ");
   return { count: rows.length, text };
+}
+
+/**
+ * 발송 1건 단가(원, 부가세 별도).
+ *
+ * ★화면에 상수로 박지 않는다 — 우리가 실제로 무는 값은 비즈톡 계약(알림톡)과 채널톡 요금표(문자)라
+ *  요금이 바뀌면 화면 글자만 옛날 값으로 남는다. 서버가 목록 응답에 실어 주는 값을 그대로 쓴다.
+ */
+export interface BulkPricing {
+  /** 카카오 알림톡 1건 — 받는 분 전원에게 나간다. */
+  alimtalkWon: number;
+  /** 문자 1건 최대(장문) — 채널톡에 번호가 저장된 분에게만, 채널톡이 따로 보낸다. */
+  smsMaxWon: number;
+}
+
+/** 서버가 값을 안 주던 옛 응답을 위한 기본값 — 2026-09-04 실제 계약 단가. */
+export const DEFAULT_PRICING: BulkPricing = { alimtalkWon: 5, smsMaxWon: 28 };
+
+/** 단가 한 칸을 받아 낸다 — 숫자가 아니거나 0 이하·NaN·Infinity 면 그 칸만 기본값으로 접는다. */
+function pricePerUnit(raw: unknown, fallback: number): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return fallback;
+  return raw;
+}
+
+/**
+ * 목록 응답의 `pricing` 을 화면이 쓸 단가로.
+ *
+ * ★칸마다 따로 접는다 — 한 칸이 망가졌다고 멀쩡한 다른 칸까지 기본값으로 되돌리면
+ *  「서버가 준 값」과 「우리가 아는 값」이 섞여 담당자에게 보이는 금액이 조용히 틀어진다.
+ * ★값이 아예 없어도(옛 서버) 화면은 그대로 돈다 — 여기서 던지면 3단계가 통째로 깨진다.
+ */
+export function parsePricing(v: unknown): BulkPricing {
+  if (!v || typeof v !== "object") return { ...DEFAULT_PRICING };
+  const raw = v as { alimtalkWon?: unknown; smsMaxWon?: unknown };
+  return {
+    alimtalkWon: pricePerUnit(raw.alimtalkWon, DEFAULT_PRICING.alimtalkWon),
+    smsMaxWon: pricePerUnit(raw.smsMaxWon, DEFAULT_PRICING.smsMaxWon),
+  };
+}
+
+/**
+ * 이번 발송의 예상 비용(원).
+ *
+ * ★3단계 표와 발송 확인 모달이 **같은 함수**로 센다 — 두 곳에서 따로 곱하면 숫자가 어긋나고,
+ *  담당자는 발송 직전에 금액이 바뀐 것으로 읽는다.
+ * ★인원이 정수가 아니거나 0 이하면 0 — 「약 NaN원」을 그리느니 0을 그린다.
+ */
+export function estimateCost(count: number, p: BulkPricing): { alimtalk: number; smsMax: number } {
+  if (!Number.isInteger(count) || count <= 0) return { alimtalk: 0, smsMax: 0 };
+  return {
+    alimtalk: Math.round(count * p.alimtalkWon),
+    smsMax: Math.round(count * p.smsMaxWon),
+  };
 }
 
 type BadgeVariant = "default" | "blue" | "green" | "red" | "yellow" | "purple";

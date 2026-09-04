@@ -19,6 +19,7 @@ import {
 import {
   AlertTriangle,
   Eye,
+  MessageCircle,
   MessageSquare,
   Pencil,
   Plus,
@@ -91,16 +92,21 @@ import {
   uniqueNeedsFill,
 } from "./step2-helpers";
 import {
+  DEFAULT_NOTICE_CATEGORY_LABEL,
+  DEFAULT_PRICING,
   JOB_GONE_NOTICE,
   NOTICE_CATEGORIES,
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
+  estimateCost,
   failureReasonOf,
+  parsePricing,
   progressHeadline,
   refundedNotice,
   restoredJobFromStore,
   skippedNotice,
+  type BulkPricing,
   type SkippedNotice,
 } from "./step3-helpers";
 
@@ -154,9 +160,7 @@ type Step = 1 | 2 | 3;
 /** 서버(checks.ts findNeedsFill)와 같은 규칙 — 담당자가 직접 고친 글도 화면에서 바로 다시 센다. */
 const NEEDS_FILL_RE = /\[확인 필요[^\]]*\]/g;
 
-/** 채널톡 알림 1건 단가(원) — 시안의 「7~28원/건」 안내와 같은 값. */
-const COST_MIN = 7;
-const COST_MAX = 28;
+// 단가(알림톡·문자)는 상수로 박지 않는다 — 서버가 목록 응답에 실어 주는 pricing 을 쓴다(step3-helpers).
 
 // MAX_RECIPIENTS 는 limits.ts 에 있다 — 사용방법 탭도 같은 값을 쓰기 때문(고리 방지).
 
@@ -478,6 +482,11 @@ export default function BulkMessageScreen() {
   pickedRef.current = picked;
   /** 방금 조회에서 「보낼 수 없게 바뀌어」 명단에서 자동으로 뺀 사람들. 다음 조회에 다시 계산된다. */
   const [droppedPicked, setDroppedPicked] = useState<PickedDrop[]>([]);
+  /**
+   * 발송 1건 단가 — 서버가 목록 응답에 실어 준다.
+   * ★조회 전(그리고 옛 서버)에도 3단계가 금액을 그려야 하므로 기본값에서 시작한다.
+   */
+  const [pricing, setPricing] = useState<BulkPricing>(DEFAULT_PRICING);
   const [loadingTargets, setLoadingTargets] = useState(true); // 첫 화면부터 자동 조회
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -503,6 +512,12 @@ export default function BulkMessageScreen() {
       setKnownManagers((prev) => mergeManagerNames(prev, incoming));
       // ★응답 덩어리를 통째로 넘긴다 — 「lockedToMe 칸이 없음」과 「false」를 함수가 구분해야 한다.
       setLockedToMe((prev) => nextManagerLock(prev, { ok: true, data: j.data }));
+      // ★단가는 응답에 **객체로 실려 있을 때만** 갱신한다 — 없으면 직전 값을 그대로 둔다.
+      //  배포 교체 중 옛 서버(단가를 안 실어 주던 판)에 걸린 재조회 한 번에 화면 단가가
+      //  기본값으로 되돌아가면, 담당자가 보던 금액이 발송 직전에 조용히 바뀐다.
+      //  칸 하나만 망가진 경우는 parsePricing 이 그 칸만 기본값으로 접는다.
+      const rawPricing = j.data?.pricing;
+      if (rawPricing && typeof rawPricing === "object") setPricing(parsePricing(rawPricing));
       setTargets(t);
       // ★고른 사람은 검색·담당이 바뀌어도 유지한다 — 찾아서 담고, 또 찾아서 담을 수 있어야 한다.
       //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**(수신거부·중복 번호)은 자동으로 빼고 알린다.
@@ -571,6 +586,8 @@ export default function BulkMessageScreen() {
   //  검색·담당을 바꿔 화면에서 사라진 사람도 명단에 그대로 남아야 한다.
   const selected = useMemo(() => [...picked.values()], [picked]);
   const selectedCount = selected.length;
+  // ★3단계 표와 발송 확인 모달이 이 하나를 나눠 쓴다 — 두 곳에서 따로 곱하면 숫자가 어긋난다.
+  const cost = useMemo(() => estimateCost(selectedCount, pricing), [selectedCount, pricing]);
   const tooMany = selectedCount > MAX_RECIPIENTS;
   const visibleKeys = useMemo(() => sendableTargets.map(keyOf), [sendableTargets]);
   const allChecked = visibleKeys.length > 0 && visibleKeys.every((k) => picked.has(k));
@@ -807,6 +824,14 @@ export default function BulkMessageScreen() {
   //   치환된 글)여야 한다. 채우기 칸에 광고성 표현을 넣어도 여기서 잡힌다.
   useEffect(() => { setAdWords(detectAdWords(composedText)); }, [composedText]);
 
+  /**
+   * 알림톡 문안의 `#{안내구분}` 에 그대로 들어가는 값.
+   * ★기본값을 두지 않는다 — 담당자가 이번 안내가 무엇인지 직접 고르게 한다.
+   * ★쓰이는 곳은 3단계지만 선언은 여기다 — 아래 시험 발송이 이 값을 함께 보내야 하는데,
+   *  useCallback 의 의존성 목록은 그리는 동안 읽히므로 선언이 뒤에 있으면 화면이 통째로 깨진다.
+   */
+  const [noticeCategory, setNoticeCategory] = useState("");
+
   // 시험 발송
   const [testOpen, setTestOpen] = useState(false);
   const [testPhone, setTestPhone] = useState("");
@@ -828,17 +853,19 @@ export default function BulkMessageScreen() {
       const res = await fetch("/api/bulk-message/test-send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ finalText: composedText, phone: testPhone }),
+        // ★안내 내용을 함께 보낸다 — 실제 발송과 같은 `#{안내구분}` 으로 나가야 시험 발송이
+        //  「고객이 받는 그대로」가 된다. 아직 안 골랐으면 빈 값 그대로 보낸다(서버가 판단한다).
+        body: JSON.stringify({ finalText: composedText, phone: testPhone, noticeCategory }),
       });
       const j = await res.json();
       if (!j.success) throw new Error(j.error);
-      setTestDone("보냈어요. 휴대폰에서 확인해 주세요.");
+      setTestDone("보냈어요. 카카오톡 알림톡을 확인해 주세요.");
     } catch (e) {
       setTestError(String((e as Error).message));
     } finally {
       setTestSending(false);
     }
-  }, [composedText, testPhone]);
+  }, [composedText, testPhone, noticeCategory]);
 
   // ── 3단계: 발송 ─────────────────────────────────────────────
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -863,11 +890,7 @@ export default function BulkMessageScreen() {
    *  되살린 화면에서는 진행 표만 그린다.
    */
   const [restoredFromStore, setRestoredFromStore] = useState(false);
-  /**
-   * 알림톡 문안의 `#{안내구분}` 에 그대로 들어가는 값.
-   * ★기본값을 두지 않는다 — 담당자가 이번 안내가 무엇인지 직접 고르게 한다.
-   */
-  const [noticeCategory, setNoticeCategory] = useState("");
+  // noticeCategory 는 시험 발송보다 위에서 선언한다(위 주석 참고).
 
   // ★새로고침 뒤 되살리기 — 적어 둔 작업 번호가 있으면 3단계로 열어 아래 폴링이 진행 표를 다시 채운다.
   useEffect(() => {
@@ -1073,6 +1096,13 @@ export default function BulkMessageScreen() {
     () => NOTICE_CATEGORIES.map((c) => ({ value: c, label: c })),
     [],
   );
+  /**
+   * 시험 발송 안내에 **보여 줄** 안내구분 — 3단계에서 고른 값이 있으면 그 값, 없으면 서버 기본값.
+   * ★보여 주기만 한다. 보내는 값은 여전히 noticeCategory 그대로다(빈 값이면 빈 값) —
+   *  화면이 기본값 글자를 지어내 실어 보내면 서버 검문(목록에 없는 값은 거절)에 걸린다.
+   */
+  const noticeCategoryPicked = noticeCategory.trim();
+  const testNoticeCategoryLabel = noticeCategoryPicked || DEFAULT_NOTICE_CATEGORY_LABEL;
 
   return (
     <>
@@ -1613,12 +1643,61 @@ export default function BulkMessageScreen() {
                 ),
               },
               {
+                // ★알림톡과 문자를 한 줄에 섞어 「7~28원」처럼 적으면, 실제로는 5원인 비용이
+                //  최대 28원짜리로 읽힌다. 두 줄로 갈라 「누구에게 · 얼마나」를 각각 못 박는다.
                 k: "예상 비용",
                 v: (
-                  <>
-                    알림 건당 {COST_MIN}~{COST_MAX}원 · 이번 발송 최대{" "}
-                    <b className="font-semibold tabular-nums">약 {won(selectedCount * COST_MAX)}원</b>
-                  </>
+                  <div className="grid gap-1.5">
+                    <div className="overflow-hidden rounded-xl border border-wedly-bd">
+                      {/* 알림톡 — 받는 분 전원에게 나간다(이번 발송에서 실제로 무는 비용). */}
+                      {/* ★좁은 폭(320px)에서는 금액을 아래 줄로 떨군다 — 바깥 표의 110px 라벨 열까지
+                          겹치면 고정 3열로는 금액·설명이 잘린다(바깥이 overflow-hidden 이라 통째로 사라진다). */}
+                      <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 bg-white px-2.5 py-2 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-wedly-bg-yellow">
+                          <MessageCircle className="h-[15px] w-[15px] text-wedly-navy" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-wedly-sub font-semibold text-wedly-t1 break-keep">카카오 알림톡</p>
+                          <p className="text-wedly-hint text-wedly-muted break-keep">
+                            받는 분 {won(selectedCount)}명 전원 · 건당 {won(pricing.alimtalkWon)}원
+                          </p>
+                        </div>
+                        <div className="col-start-2 text-left sm:col-start-3 sm:text-right">
+                          <p className="text-wedly-sub font-semibold text-wedly-navy tabular-nums">
+                            약 {won(cost.alimtalk)}원
+                          </p>
+                          <p className="text-wedly-hint text-wedly-muted break-keep">도착한 건만 과금</p>
+                        </div>
+                      </div>
+                      {/* 문자 — 채널톡에 번호가 저장된 분에게만 채널톡이 따로 보낸다. 보통 해당 없음. */}
+                      <div className="grid grid-cols-[24px_minmax(0,1fr)] items-center gap-x-2 gap-y-1.5 border-t border-wedly-bd bg-wedly-bg-gray px-2.5 py-2 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-wedly-bd bg-white">
+                          <Smartphone className="h-[15px] w-[15px] text-wedly-t2" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-wedly-sub font-semibold text-wedly-t1 break-keep">문자</p>
+                          {/* ★회색 층 위에서는 t2 로 — muted 는 이 바탕에서 너무 옅어 안 읽힌다. */}
+                          <p className="text-wedly-hint text-wedly-t2 break-keep">
+                            채널톡에 번호가 저장된 분만 · 건당 최대 {won(pricing.smsMaxWon)}원
+                          </p>
+                        </div>
+                        <div className="col-start-2 text-left sm:col-start-3 sm:text-right">
+                          <p className="text-wedly-sub font-semibold text-wedly-t2 tabular-nums">
+                            최대 약 {won(cost.smsMax)}원
+                          </p>
+                          <p className="text-wedly-hint text-wedly-t2 break-keep">보통 해당 없음</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 text-wedly-label font-semibold text-wedly-muted break-keep">
+                        부가세 별도
+                      </span>
+                      <span className="inline-flex h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 text-wedly-label font-semibold text-wedly-muted break-keep">
+                        알림톡 실패해도 문자로 대신 안 감
+                      </span>
+                    </div>
+                  </div>
                 ),
               },
             ].map((row) => (
@@ -1840,7 +1919,12 @@ export default function BulkMessageScreen() {
           <div className="overflow-hidden rounded-xl border border-wedly-bd">
             {[
               { k: "받는 사람", v: `${won(selectedCount)}명` },
-              { k: "예상 비용", v: `최대 약 ${won(selectedCount * COST_MAX)}원 (건당 ${COST_MIN}~${COST_MAX}원)` },
+              {
+                // ★3단계 표와 같은 estimateCost 로 센다 — 발송 직전에 숫자가 달라지면 사고로 읽힌다.
+                // ★「부가세 별도」를 3단계 표에만 적어 두면, 마지막에 보는 이 금액을 청구액으로 읽는다.
+                k: "예상 비용",
+                v: `알림톡 약 ${won(cost.alimtalk)}원 (건당 ${won(pricing.alimtalkWon)}원) · 문자는 해당되는 분만 최대 ${won(cost.smsMax)}원 · 부가세 별도`,
+              },
               { k: "보내는 이름", v: "위들리 — 채널톡 공식 채널" },
             ].map((r) => (
               <div key={r.k} className="grid grid-cols-[92px_1fr] border-t border-wedly-bd first:border-t-0">
@@ -1860,15 +1944,16 @@ export default function BulkMessageScreen() {
         open={testOpen}
         onClose={() => { if (!testSending) setTestOpen(false); }}
         title="내 번호로 시험 발송"
-        description="실제로 받아 보는 모습 그대로 한 통만 보냅니다."
+        description="고객이 받는 그대로 — 카카오 알림톡 한 통을 보냅니다."
         footer={
-          <div className="flex justify-end gap-2">
+          // ★버튼 글자가 길어 좁은 폭에서 잘린다 — 넘치면 줄을 바꾼다.
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="secondary" onClick={() => setTestOpen(false)} disabled={testSending}>
               닫기
             </Button>
             <Button onClick={testSend} loading={testSending} disabled={!testPhone.trim() || !canTestSend}>
-              <Smartphone className="h-[15px] w-[15px]" />
-              시험 발송
+              <MessageCircle className="h-[15px] w-[15px]" />
+              알림톡으로 시험 발송
             </Button>
           </div>
         }
@@ -1883,6 +1968,23 @@ export default function BulkMessageScreen() {
             inputMode="tel"
             className="tabular-nums"
           />
+          {/* ★무엇이 오는지 먼저 알려 준다 — 「문자가 오나?」로 기다리다 못 받은 줄 아는 일이 없게. */}
+          <StatusBox tone="info" title={`알림톡 1통(${won(pricing.alimtalkWon)}원)이 갑니다`}>
+            카카오톡으로 안내 알림이 오고, 버튼을 누르면 안내문이 담긴 채팅방이 열립니다 — 고객이 겪는 순서 그대로입니다.
+            {/* ★어떤 안내구분으로 나가는지 밝힌다 — 「고객이 받는 그대로」라고 적어 두고 정작
+                무엇으로 나가는지 안 알리면, 실제 발송에서 다른 문구를 보고 놀란다.
+              ★StatusBox 는 children 을 <p> 로 감싼다 — 여기에 <p> 를 또 넣지 마라(줄만 바꾼다). */}
+            <span className="mt-1 block break-keep">
+              안내 내용은 「{testNoticeCategoryLabel}」로 나갑니다
+              {!noticeCategoryPicked && " — 3단계에서 고르면 그 값으로 나가요"}.
+            </span>
+            {/* ★예전에 시험 발송을 해 본 번호는 채널톡에 이미 저장돼 있어(진행 중인 진짜 상담의 답변
+                알림을 끊지 않으려 일부러 안 지운다) 팔로업 문자가 알림톡과 함께 온다 — 안 적으면
+                「왜 문자가 또 오지?」로 읽힌다. */}
+            <span className="mt-1 block break-keep">
+              예전에 시험해 본 번호는 채널톡에 번호가 남아 있어 문자도 함께 올 수 있어요.
+            </span>
+          </StatusBox>
           <p className="text-wedly-hint text-wedly-muted break-keep">
             개인화 값은 {"{대표명}"}=홍길동, {"{회사명}"}=시험회사로 채워 보냅니다. 「확인 필요」 표시가 남아 있어도 시험 발송은 됩니다.
           </p>
