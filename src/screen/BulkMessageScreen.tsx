@@ -1164,9 +1164,18 @@ export default function BulkMessageScreen() {
               </label>
               <div className="flex h-10 items-center gap-2 rounded-full border border-wedly-bd bg-white px-4 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-wedly-accent">
                 <Search className="h-4 w-4 shrink-0 text-wedly-muted" aria-hidden />
+                {/*
+                  ★`type="search"` 를 쓰지 않는다 — 크롬·사파리가 **자기 지우개(✕)를 덧그려**
+                   우리 지우개 단추와 나란히 ✕ 가 둘로 보인다(배포본 실측 1178px·1206px).
+                   브라우저 기본 지우개는 WEDLY 토큰을 안 따르므로 우리 것만 남긴다.
+                  ★`type="search"` 를 버리며 잃는 둘은 표준 속성으로 되찾는다 —
+                   읽어 주는 도구의 「검색 칸」 안내는 role, 휴대폰 자판의 「검색」 키는 enterKeyHint.
+                */}
                 <input
                   id="bm-search"
-                  type="search"
+                  type="text"
+                  role="searchbox"
+                  enterKeyHint="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={SEARCH_PLACEHOLDER}
