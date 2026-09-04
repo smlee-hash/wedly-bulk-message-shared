@@ -46,18 +46,24 @@ import {
   LOADING_TARGETS_HINT,
   MANAGER_LOCKED_LABEL,
   MANAGER_MINE,
+  MANAGER_UNKNOWN_LABEL,
   SEARCH_PLACEHOLDER,
   canProceedWithTargets,
   droppedSummary,
   hiddenPickedCount,
   listFetchDelayMs,
+  isRefunded,
+  managerControl,
   managerQueryOf,
   managerSelectOptions,
+  mergeDropped,
   mergeManagerNames,
   nextManagerLock,
   reconcilePicked,
+  statusBadgeOf,
   step1ListPhase,
   uniqueManagers,
+  type ManagerLock,
   type PickedDrop,
 } from "./step1-helpers";
 import {
@@ -92,6 +98,7 @@ import {
   canConfirmSend,
   failureReasonOf,
   progressHeadline,
+  refundedNotice,
   restoredJobFromStore,
   skippedNotice,
   type SkippedNotice,
@@ -455,7 +462,7 @@ export default function BulkMessageScreen() {
    * ★조회가 실패해도 이 값을 false 로 되돌리지 않는다 — 한 번 잠긴 사용자에게 갑자기 고르개가
    *  나타나면 「고를 수 있나 보다」로 읽는다.
    */
-  const [lockedToMe, setLockedToMe] = useState(false);
+  const [lockedToMe, setLockedToMe] = useState<ManagerLock>(null);
   const [search, setSearch] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
   /**
@@ -499,18 +506,16 @@ export default function BulkMessageScreen() {
       // ★고른 사람은 검색·담당이 바뀌어도 유지한다 — 찾아서 담고, 또 찾아서 담을 수 있어야 한다.
       //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**(수신거부·중복 번호)은 자동으로 빼고 알린다.
       //  판정 규칙은 reconcilePicked 가 혼자 안다(시험이 못을 박아 둔다).
-      const fixed = reconcilePicked(
-        pickedRef.current,
-        t.map((x) => ({ key: keyOf(x), sendable: x.sendable, excludeReason: x.excludeReason })),
-      );
-      setPicked(fixed.picked); // 뺄 사람이 없으면 같은 Map 이라 React 가 다시 그리지 않는다
-      setDroppedPicked(fixed.dropped);
+      const fixed = reconcilePicked(pickedRef.current, t.map((x) => ({ key: keyOf(x), row: x })));
+      setPicked(fixed.picked); // 바뀐 게 없으면 같은 Map 이라 React 가 다시 그리지 않는다
+      // ★알림은 쌓는다 — 다음 조회가 「누가 왜 빠졌는지」를 지워 버리면 사람이 영영 못 본다.
+      setDroppedPicked((prev) => mergeDropped(prev, fixed.dropped));
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
       setTargets([]);
-      setDroppedPicked([]);
-      // ★조회 실패로 잠금을 풀지 않는다 — 규칙은 nextManagerLock 이 혼자 안다(시험이 못을 박는다).
+      // ★빠진 사람 알림은 조회가 실패해도 지우지 않는다 — 이미 일어난 사실이다.
+      // ★조회 실패로 잠금도 풀지 않는다 — 규칙은 nextManagerLock 이 혼자 안다(시험이 못을 박는다).
       setLockedToMe((prev) => nextManagerLock(prev, { ok: false }));
       setLoadedOnce(true);
       setLoadError(`대상을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
@@ -903,6 +908,7 @@ export default function BulkMessageScreen() {
       setRestoredFromStore(false);
       // 옛 응답에는 skipped 가 없다 → null 이면 아래 두 옛 안내가 대신 뜬다.
       setSkipped(skippedNotice(j.data?.skipped));
+      setDroppedPicked([]); // 발송이 시작되면 1단계 알림은 제 몫을 다했다
       setBlockedCount(Number(j.data.blockedCount ?? 0));
       setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
       setPollError("");
@@ -1005,6 +1011,11 @@ export default function BulkMessageScreen() {
   });
   /** 발송 단추가 눌리는 조건 — 대상·상한에 더해 **안내 내용을 골랐는지**까지 본다. */
   const sendReady = canConfirmSend({ targetsOk, tooMany, noticeCategory });
+  /**
+   * 고른 명단에 섞인 환불 고객 — 판정은 환불일 하나뿐(진행상태 글자는 안 본다).
+   * ★표 안의 줄별 판정(`refunded`)과 이름이 겹치지 않게 둔다 — 겹치면 안쪽이 바깥을 가린다.
+   */
+  const refundedInSelection = useMemo(() => refundedNotice(selected), [selected]);
   const listPhase = step1ListPhase({ loading: loadingTargets, loadError });
   const step2Hint = step2FooterHint({
     tooLong,
@@ -1114,15 +1125,10 @@ export default function BulkMessageScreen() {
           />
 
           <div className="mb-4 flex flex-wrap items-end gap-3">
-            {/* ★화면의 잠금은 거들 뿐이다 — 실제 방어는 서버(lockedToMe 를 내려주는 쪽)에 있다. */}
-            {lockedToMe ? (
-              <div className="flex min-w-0 flex-col gap-1">
-                <span className="text-wedly-label font-semibold text-wedly-muted">담당 컨설턴트</span>
-                <div className="flex h-10 items-center rounded-full border border-wedly-bd bg-wedly-bg-gray px-4 text-wedly-sub text-wedly-t2">
-                  {MANAGER_LOCKED_LABEL}
-                </div>
-              </div>
-            ) : (
+            {/* ★화면의 잠금은 거들 뿐이다 — 실제 방어는 서버(lockedToMe 를 내려주는 쪽)에 있다.
+                ★아직 답을 못 받았으면(모름) 고르개를 **아예 안 그린다** — 파트너 앱에서 첫 조회가
+                  실패했을 때 「전체」를 고를 수 있는 것처럼 보이면 화면이 거짓말을 한다. */}
+            {managerControl(lockedToMe) === "picker" ? (
               <div className="flex min-w-0 flex-col gap-1">
                 <label htmlFor="bm-manager" className="text-wedly-label font-semibold text-wedly-muted">
                   담당 컨설턴트
@@ -1136,6 +1142,16 @@ export default function BulkMessageScreen() {
                   // 알약 — 옆의 검색 칸과 같은 모양으로(공용 부품은 안 건드리고 이 화면만).
                   className="w-[200px] [&>button]:rounded-full [&>button]:pl-4"
                 />
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-wedly-label font-semibold text-wedly-muted">담당 컨설턴트</span>
+                <div
+                  className="flex h-10 w-[200px] items-center rounded-full border border-wedly-bd bg-wedly-bg-gray px-4 text-wedly-sub text-wedly-t2"
+                  aria-live="polite"
+                >
+                  {managerControl(lockedToMe) === "locked" ? MANAGER_LOCKED_LABEL : MANAGER_UNKNOWN_LABEL}
+                </div>
               </div>
             )}
 
@@ -1186,11 +1202,18 @@ export default function BulkMessageScreen() {
           )}
 
           {listPhase !== "error" && (<>
+          {/* ★알림은 쌓이고, 사람이 닫거나 발송이 시작될 때만 사라진다 — 다음 조회가 지우면
+              검색어를 천천히 치는 동안 「누가 왜 빠졌는지」를 놓친다. */}
           {droppedPicked.length > 0 && (
             <StatusBox
               tone="warning"
               title={`${won(droppedPicked.length)}명은 고른 명단에서 자동으로 뺐어요`}
               className="mb-4"
+              actions={
+                <Button type="button" variant="secondary" size="sm" onClick={() => setDroppedPicked([])}>
+                  알림 닫기
+                </Button>
+              }
             >
               보낼 수 없게 바뀐 분이라 뺐습니다 — {droppedSummary(droppedPicked)}. 표에는 그대로 남아 있지만 체크가 잠깁니다.
             </StatusBox>
@@ -1262,8 +1285,9 @@ export default function BulkMessageScreen() {
                 ) : (
                   visibleTargets.map((t, i) => {
                     // 환불 판정은 **환불일이 채워졌는지** 하나로 한다(2026-09-04 사장님 확정).
-                    // 진행상태 글자에 「환불」이 있어도 환불일이 비면 빨갛게 하지 않는다 — 실제로 그런 줄이 있다.
-                    const refunded = Boolean(t.refundedAt);
+                    // 3단계 경고도 같은 함수(isRefunded)를 봐야 표와 경고가 어긋나지 않는다.
+                    const refunded = isRefunded(t);
+                    const statusBadge = statusBadgeOf(t.statuses);
                     return (
                     <tr
                       key={`${keyOf(t)}-${i}`}
@@ -1297,8 +1321,10 @@ export default function BulkMessageScreen() {
                       <td className="px-3 py-2">
                         {refunded ? (
                           <Badge variant="red">환불 {t.refundedAt}</Badge>
-                        ) : t.statuses.length > 0 ? (
-                          <Badge variant={t.statuses.includes("계약완료") ? "green" : "default"}>{t.statuses[0]}</Badge>
+                        ) : statusBadge ? (
+                          // ★색과 글자는 반드시 같은 값에서 나온다(statusBadgeOf) — 따로 정하면
+                          //  ["진행중","계약완료"] 에서 초록색 「진행중」이 뜬다.
+                          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
                         ) : (
                           <span className="text-wedly-hint text-wedly-t2">—</span>
                         )}
@@ -1615,6 +1641,17 @@ export default function BulkMessageScreen() {
               {tooMany && (
                 <StatusBox tone="error" title={`한 번에 ${won(MAX_RECIPIENTS)}명까지만 보낼 수 있어요`}>
                   지금 고른 사람이 {won(selectedCount)}명입니다. 1단계로 돌아가 {won(selectedCount - MAX_RECIPIENTS)}명을 빼 주세요.
+                </StatusBox>
+              )}
+              {/* ★전체 선택은 목록 아래쪽 환불 고객까지 담는다 — 빨간 줄을 못 보고 지나쳤을 수 있어
+                  보내기 직전에 한 번 더 알린다(고르는 동작 자체는 그대로 둔다). */}
+              {refundedInSelection && (
+                <StatusBox
+                  tone="warning"
+                  title={`환불 고객 ${won(refundedInSelection.count)}명이 포함돼 있어요`}
+                >
+                  {refundedInSelection.text ? `${refundedInSelection.text} — ` : ""}
+                  환불일이 적힌 고객입니다. 보내도 괜찮은 안내인지 1단계에서 한 번 더 확인해 주세요.
                 </StatusBox>
               )}
               <StatusBox tone="warning" title="발송 후에는 취소할 수 없어요">

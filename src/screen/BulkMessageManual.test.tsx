@@ -85,9 +85,12 @@ describe("1단계 개편(2026-09-04) — 탭 3개·진행상태가 사라진 흐
     }
   });
 
-  it("「목록에 없어요」 질문이 계약일 안내로 바뀌었다", () => {
+  it("「목록에 없어요」 질문이 원인 셋을 다 알려 준다", () => {
     expect(html).toContain("계약한 고객인데 목록에 없어요");
-    expect(html).toContain("비어 있으면 올라오지 않습니다");
+    // 계약일만 알려 주면 담당·검색 때문에 안 보이는 사람이 멀쩡한 계약일을 고치러 간다.
+    expect(html).toContain("「전체」로 바꿔 보세요");
+    expect(html).toContain("검색어를 지워 보세요");
+    expect(html).toContain("비어 있는 것입니다");
   });
 });
 
@@ -264,8 +267,21 @@ describe("발송하기 / 사용방법 탭", () => {
     // 판단은 nextManagerLock 이 혼자 한다 — 화면이 Boolean(...) 으로 직접 정하면 실패 경로에서 잠금이 풀린다.
     expect(src).toContain("nextManagerLock(prev, { ok: true, lockedToMe: j.data?.lockedToMe })");
     expect(src).toContain("nextManagerLock(prev, { ok: false })");
-    expect(src).toContain("{MANAGER_LOCKED_LABEL}");
     expect(src).not.toContain("setLockedToMe(Boolean(");
+    // 그릴지 말지도 함수가 정한다 — 「모름」에 고르개가 뜨는 것을 화면이 다시 판단하지 않게
+    expect(src).toContain('managerControl(lockedToMe) === "picker"');
+    expect(src).toContain("useState<ManagerLock>(null)");
+  });
+
+  it("발송 확인에 환불 고객 경고를 띄우고, 판정은 환불일 하나로 한다", () => {
+    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    expect(src).toContain("refundedNotice(selected)");
+    expect(src).toContain("명이 포함돼 있어요");
+    // 표의 빨간 띠도 같은 함수를 본다 — 둘이 어긋나면 경고가 거짓말이 된다
+    expect(src).toContain("isRefunded(t)");
+    expect(src).not.toContain("Boolean(t.refundedAt)");
+    // 전체 선택 동작은 그대로다 — 사장님은 「표시」만 요구했다
+    expect(src).toContain("else for (const t of sendableTargets) next.set(keyOf(t), t);");
   });
 
   it("발송이 걸러낸 사람을 알리고, 같은 사실을 두 모양으로 그리지 않는다", () => {

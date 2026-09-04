@@ -9,6 +9,7 @@ import {
   canConfirmSend,
   failureReasonOf,
   progressHeadline,
+  refundedNotice,
   restoredJobFromStore,
   skippedNotice,
 } from "./step3-helpers";
@@ -172,6 +173,21 @@ describe("skippedNotice — 발송이 걸러낸 사람 알리기", () => {
     ])).toEqual({ total: 2, text: "중복 번호 2" });
   });
 
+  it("건수가 글자로 와도 살린다 — 경고가 통째로 사라지면 안 된다", () => {
+    // 같은 응답의 blockedCount·outOfScopeCount 도 화면이 Number(...) 로 받는다(동작을 맞춘다).
+    expect(skippedNotice([{ reason: "수신거부", count: "2" }])).toEqual({
+      total: 2,
+      text: "수신거부 2",
+    });
+    expect(skippedNotice([
+      { reason: "번호 없음", count: "1" },
+      { reason: "중복 번호", count: 2 },
+    ])).toEqual({ total: 3, text: "번호 없음 1 · 중복 번호 2" });
+    // 숫자로 못 읽는 값만 버린다
+    expect(skippedNotice([{ reason: "수신거부", count: "많음" }])).toBeNull();
+    expect(skippedNotice([{ reason: "수신거부", count: "-3" }])).toBeNull();
+  });
+
   it("망가진 줄은 건너뛰고 나머지는 살린다", () => {
     expect(
       skippedNotice([
@@ -181,8 +197,57 @@ describe("skippedNotice — 발송이 걸러낸 사람 알리기", () => {
         null,
         "수신거부",
         { reason: "  범위 밖  ", count: 2 },
-        { reason: "중복 번호", count: "3" },
       ]),
     ).toEqual({ total: 2, text: "범위 밖 2" });
+  });
+});
+
+describe("refundedNotice — 고른 명단에 섞인 환불 고객", () => {
+  const row = (companyName: string, refundedAt = "") => ({ companyName, refundedAt });
+
+  it("환불일이 있는 사람만 센다 — 진행상태 글자로 세지 않는다", () => {
+    const out = refundedNotice([
+      row("가나다", "2026-06-02"),
+      { companyName: "라마바", refundedAt: "", statuses: ["환불"] } as never,
+      row("사아자"),
+    ]);
+    expect(out).toEqual({ count: 1, text: "가나다" });
+  });
+
+  it("여럿이면 이름 몇 개만 보이고 나머지는 「외 N곳」", () => {
+    const out = refundedNotice([
+      row("가나다", "2026-06-02"),
+      row("라마바", "2026-06-03"),
+      row("사아자", "2026-06-04"),
+      row("차카타", "2026-06-05"),
+    ]);
+    expect(out).toEqual({ count: 4, text: "가나다 · 라마바 외 2곳" });
+  });
+
+  it("보여 줄 이름 수는 부를 때 정할 수 있다", () => {
+    const rows = [row("가", "d"), row("나", "d"), row("다", "d")];
+    expect(refundedNotice(rows, 1)?.text).toBe("가 외 2곳");
+    expect(refundedNotice(rows, 3)?.text).toBe("가 · 나 · 다");
+  });
+
+  it("한 명이면 이름만", () => {
+    expect(refundedNotice([row("가나다", "2026-06-02")])).toEqual({ count: 1, text: "가나다" });
+  });
+
+  it("회사명이 없어도 인원수는 알린다 — 조용히 넘어가면 안 된다", () => {
+    expect(refundedNotice([row("", "2026-06-02"), row("  ", "2026-06-03")])).toEqual({
+      count: 2,
+      text: "",
+    });
+    // 이름이 있는 줄만 골라 보여 준다
+    expect(refundedNotice([row("", "d"), row("라마바", "d")])).toEqual({
+      count: 2,
+      text: "라마바 외 1곳",
+    });
+  });
+
+  it("환불 고객이 없으면 아무것도 안 그린다", () => {
+    expect(refundedNotice([])).toBeNull();
+    expect(refundedNotice([row("가나다"), row("라마바", "   ")])).toBeNull();
   });
 });

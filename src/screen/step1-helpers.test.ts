@@ -5,11 +5,16 @@ import {
   MANAGER_MINE,
   LOADING_TARGETS_HINT,
   MANAGER_LOCKED_LABEL,
+  MANAGER_UNKNOWN_LABEL,
   SEARCH_PLACEHOLDER,
   canProceedWithTargets,
   droppedSummary,
   hiddenPickedCount,
+  isRefunded,
+  managerControl,
+  mergeDropped,
   reconcilePicked,
+  statusBadgeOf,
   step1ListPhase,
   listFetchDelayMs,
   managerQueryOf,
@@ -71,12 +76,13 @@ describe("managerQueryOf", () => {
 
 describe("nextManagerLock — 파트너 앱 담당 잠금", () => {
   it("서버가 잠갔다고 하면 잠근다", () => {
+    expect(nextManagerLock(null, { ok: true, lockedToMe: true })).toBe(true);
     expect(nextManagerLock(false, { ok: true, lockedToMe: true })).toBe(true);
   });
 
   it("서버가 안 잠갔거나 값을 안 주면(ERP) 고르개를 그린다", () => {
-    expect(nextManagerLock(false, { ok: true, lockedToMe: false })).toBe(false);
-    expect(nextManagerLock(false, { ok: true })).toBe(false);
+    expect(nextManagerLock(null, { ok: true, lockedToMe: false })).toBe(false);
+    expect(nextManagerLock(null, { ok: true })).toBe(false);
     expect(nextManagerLock(true, { ok: true, lockedToMe: false })).toBe(false);
   });
 
@@ -87,8 +93,20 @@ describe("nextManagerLock — 파트너 앱 담당 잠금", () => {
     expect(nextManagerLock(true, { ok: false, lockedToMe: false })).toBe(true);
   });
 
-  it("잠긴 자리에 뜨는 글이 고정이다", () => {
+  it("★첫 조회가 실패하면 「모름」이 그대로 남는다 — 파트너 앱에 고르개가 뜨면 안 된다", () => {
+    expect(nextManagerLock(null, { ok: false })).toBeNull();
+    expect(managerControl(nextManagerLock(null, { ok: false }))).toBe("loading");
+  });
+
+  it("모르는 동안엔 고르개를 아예 안 그린다", () => {
+    expect(managerControl(null)).toBe("loading");
+    expect(managerControl(true)).toBe("locked");
+    expect(managerControl(false)).toBe("picker");
+  });
+
+  it("자리에 뜨는 글이 고정이다", () => {
     expect(MANAGER_LOCKED_LABEL).toBe("내 고객만 볼 수 있어요");
+    expect(MANAGER_UNKNOWN_LABEL).toBe("확인 중…");
   });
 });
 
@@ -165,19 +183,23 @@ describe("hiddenPickedCount", () => {
 });
 
 describe("reconcilePicked", () => {
-  const row = (key: string) => ({ key, name: `${key}회사` });
-  const pickedOf = (...keys: string[]) =>
-    new Map(keys.map((k) => [k, row(k)] as const));
-  const incoming = (
-    ...rows: Array<{ key: string; sendable: boolean; excludeReason?: string }>
-  ) => rows.map((r) => ({ excludeReason: "", ...r }));
+  type Row = { key: string; representative: string; sendable: boolean; excludeReason: string };
+  const row = (key: string, extra: Partial<Row> = {}): Row => ({
+    key,
+    representative: `${key}대표`,
+    sendable: true,
+    excludeReason: "",
+    ...extra,
+  });
+  const pickedOf = (...keys: string[]) => new Map(keys.map((k) => [k, row(k)] as const));
+  const incoming = (...rows: Row[]) => rows.map((r) => ({ key: r.key, row: r }));
 
-  it("ⓐ 목록에 있고 여전히 보낼 수 있으면 그대로 둔다", () => {
+  it("ⓐ 목록에 있고 값도 그대로면 손대지 않는다", () => {
     const before = pickedOf("a", "b");
-    const out = reconcilePicked(before, incoming({ key: "a", sendable: true }, { key: "b", sendable: true }));
+    const out = reconcilePicked(before, incoming(row("a"), row("b")));
     expect([...out.picked.keys()]).toEqual(["a", "b"]);
     expect(out.dropped).toEqual([]);
-    // 뺄 사람이 없으면 받은 Map 을 그대로 — 화면이 괜히 다시 그려지지 않게
+    // 바뀐 게 없으면 받은 Map 을 그대로 — 화면이 괜히 다시 그려지지 않게
     expect(out.picked).toBe(before);
   });
 
@@ -185,7 +207,7 @@ describe("reconcilePicked", () => {
     const before = pickedOf("a", "b");
     const out = reconcilePicked(
       before,
-      incoming({ key: "a", sendable: true }, { key: "b", sendable: false, excludeReason: "수신거부" }),
+      incoming(row("a"), row("b", { sendable: false, excludeReason: "수신거부" })),
     );
     expect([...out.picked.keys()]).toEqual(["a"]);
     expect(out.dropped).toEqual([{ key: "b", reason: "수신거부" }]);
@@ -194,7 +216,7 @@ describe("reconcilePicked", () => {
   });
 
   it("ⓒ 목록에 아예 없으면 그대로 둔다 — 검색·담당 때문에 안 보이는 것뿐이다", () => {
-    const out = reconcilePicked(pickedOf("a", "b"), incoming({ key: "a", sendable: true }));
+    const out = reconcilePicked(pickedOf("a", "b"), incoming(row("a")));
     expect([...out.picked.keys()]).toEqual(["a", "b"]);
     expect(out.dropped).toEqual([]);
   });
@@ -203,26 +225,108 @@ describe("reconcilePicked", () => {
     const out = reconcilePicked(
       pickedOf("a", "b", "c", "d"),
       incoming(
-        { key: "a", sendable: false, excludeReason: "수신거부" },
-        { key: "b", sendable: false, excludeReason: "중복 번호" },
-        { key: "c", sendable: false, excludeReason: "수신거부" },
-        { key: "d", sendable: true },
+        row("a", { sendable: false, excludeReason: "수신거부" }),
+        row("b", { sendable: false, excludeReason: "중복 번호" }),
+        row("c", { sendable: false, excludeReason: "수신거부" }),
+        row("d"),
       ),
     );
     expect([...out.picked.keys()]).toEqual(["d"]);
     expect(droppedSummary(out.dropped)).toBe("수신거부 2 · 중복 번호 1");
   });
 
+  it("ⓔ 여전히 보낼 수 있으면 **새 줄로 갈아 끼운다** — 표엔 새 이름, 명단엔 옛 이름이면 안 된다", () => {
+    const before = pickedOf("a");
+    const fresh = row("a", { representative: "새대표" });
+    const out = reconcilePicked(before, incoming(fresh));
+    expect(out.picked.get("a")?.representative).toBe("새대표");
+    expect(out.picked.get("a")).toBe(fresh);
+    expect(out.dropped).toEqual([]);
+    expect(out.picked).not.toBe(before);
+    // 목록에 없는 줄은 갈아 끼울 새 값이 없으니 옛 값 그대로
+    const kept = reconcilePicked(pickedOf("a", "z"), incoming(fresh)).picked.get("z");
+    expect(kept?.representative).toBe("z대표");
+  });
+
   it("사유가 비어 있어도 「제외」로 알려 준다 — 조용히 사라지지 않게", () => {
-    const out = reconcilePicked(pickedOf("a"), incoming({ key: "a", sendable: false, excludeReason: "" }));
+    const out = reconcilePicked(pickedOf("a"), incoming(row("a", { sendable: false })));
     expect(out.dropped).toEqual([{ key: "a", reason: "제외" }]);
   });
 
   it("고른 사람이 없으면 아무 일도 없다", () => {
-    const before = new Map<string, { key: string; name: string }>();
-    const out = reconcilePicked(before, incoming({ key: "a", sendable: false, excludeReason: "수신거부" }));
+    const before = new Map<string, Row>();
+    const out = reconcilePicked(before, incoming(row("a", { sendable: false, excludeReason: "수신거부" })));
     expect(out.picked).toBe(before);
     expect(out.dropped).toEqual([]);
+  });
+});
+
+describe("mergeDropped — 알림을 쌓는다", () => {
+  const d = (key: string, reason: string) => ({ key, reason });
+
+  it("다음 조회가 빈 손이어도 앞서 알린 것을 지우지 않는다", () => {
+    const prev = [d("a", "수신거부")];
+    expect(mergeDropped(prev, [])).toBe(prev);
+  });
+
+  it("새로 빠진 사람을 뒤에 붙인다", () => {
+    expect(mergeDropped([d("a", "수신거부")], [d("b", "중복 번호")])).toEqual([
+      d("a", "수신거부"),
+      d("b", "중복 번호"),
+    ]);
+  });
+
+  it("같은 사람이 또 오면 한 줄로 합치고 사유는 최신으로", () => {
+    const out = mergeDropped([d("a", "중복 번호"), d("b", "수신거부")], [d("a", "수신거부")]);
+    expect(out).toEqual([d("a", "수신거부"), d("b", "수신거부")]);
+    expect(droppedSummary(out)).toBe("수신거부 2");
+  });
+
+  it("세 번에 걸쳐 빠져도 건수가 다 남는다 — 검색어를 천천히 칠 때의 실제 흐름", () => {
+    let acc = mergeDropped([], [d("a", "수신거부")]);
+    acc = mergeDropped(acc, []); // 두 번째 응답은 빈 손
+    acc = mergeDropped(acc, [d("b", "중복 번호")]);
+    expect(acc).toHaveLength(2);
+    expect(droppedSummary(acc)).toBe("수신거부 1 · 중복 번호 1");
+  });
+});
+
+describe("statusBadgeOf — 색과 글자가 같은 값을 본다", () => {
+  it("「계약완료」가 들어 있으면 초록 「계약완료」 — 첫 값이 다른 상태여도", () => {
+    expect(statusBadgeOf(["진행중", "계약완료"])).toEqual({ label: "계약완료", variant: "green" });
+    expect(statusBadgeOf(["계약완료"])).toEqual({ label: "계약완료", variant: "green" });
+  });
+
+  it("없으면 첫 값을 무채색으로 — 초록 「진행중」 같은 거짓말이 안 나오게", () => {
+    expect(statusBadgeOf(["진행중"])).toEqual({ label: "진행중", variant: "default" });
+    expect(statusBadgeOf(["조회완료", "상담중"])).toEqual({ label: "조회완료", variant: "default" });
+  });
+
+  it("빈 값·공백만 있으면 딱지를 안 그린다", () => {
+    expect(statusBadgeOf([])).toBeNull();
+    expect(statusBadgeOf(["", "   "])).toBeNull();
+    expect(statusBadgeOf(["", "계약완료"])).toEqual({ label: "계약완료", variant: "green" });
+  });
+
+  it("초록은 「계약완료」일 때만 — 색과 글자가 어긋나는 짝이 없다", () => {
+    for (const statuses of [["진행중"], ["환불"], ["조회완료", "상담중"], ["계약완료", "환불"]]) {
+      const badge = statusBadgeOf(statuses);
+      if (!badge) continue;
+      expect(badge.variant === "green").toBe(badge.label === "계약완료");
+    }
+  });
+});
+
+describe("isRefunded — 판정은 환불일 하나뿐", () => {
+  it("환불일이 채워졌으면 환불", () => {
+    expect(isRefunded({ refundedAt: "2026-06-02" })).toBe(true);
+  });
+
+  it("비었거나 공백뿐이면 아니다", () => {
+    expect(isRefunded({ refundedAt: "" })).toBe(false);
+    expect(isRefunded({ refundedAt: "   " })).toBe(false);
+    expect(isRefunded({ refundedAt: null })).toBe(false);
+    expect(isRefunded({})).toBe(false);
   });
 });
 

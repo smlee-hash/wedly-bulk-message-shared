@@ -32,35 +32,75 @@ export interface PickedDrop {
   reason: string;
 }
 
+/** 두 줄이 「같은 값」인가 — 칸이 하나라도 다르면 새 줄로 갈아 끼운다(줄은 납작한 객체다). */
+function sameRow(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) =>
+    Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+  );
+}
+
 /**
  * 새 목록을 받을 때마다 고른 명단을 손본다.
  *
- * ★규칙 두 가지가 서로 반대 방향이라 헷갈리기 쉽다 —
+ * ★규칙 **세** 가지가 서로 다른 방향이라 헷갈리기 쉽다 —
  *  ㉠ **이번 목록에 있는데 보낼 수 없게 바뀌었으면 뺀다.** 수신거부한 분이 「보낼 사람」으로
  *     세어지면 담당자가 오해한다. 서버가 발송 직전 또 거른다는 것과 별개로 화면이 먼저 정직해야 한다.
  *  ㉡ **이번 목록에 아예 없으면 그대로 둔다.** 검색·담당을 바꿔 안 보이는 것일 뿐 자격이 사라진 게
  *     아니다. 여기서 빼면 「담아 두기」가 통째로 깨진다.
+ *  ㉢ **이번 목록에 있고 여전히 보낼 수 있으면 새 줄로 갈아 끼운다.** 옛 줄을 그대로 두면
+ *     표에는 새 대표자명이 보이는데 명단엔 옛 이름이 남아 발송 확인이 어긋난다.
  *
- * 뺄 사람이 없으면 **받은 Map 을 그대로** 돌려준다 — 화면이 괜히 다시 그려지지 않게.
+ * 바뀐 게 없으면 **받은 Map 을 그대로** 돌려준다 — 화면이 괜히 다시 그려지지 않게.
  */
-export function reconcilePicked<T>(
+export function reconcilePicked<T extends { sendable: boolean; excludeReason: string }>(
   picked: Map<string, T>,
-  incoming: Array<{ key: string; sendable: boolean; excludeReason: string }>,
+  incoming: Array<{ key: string; row: T }>,
 ): { picked: Map<string, T>; dropped: PickedDrop[] } {
-  const byKey = new Map<string, { sendable: boolean; excludeReason: string }>();
-  for (const row of incoming) {
-    if (!byKey.has(row.key)) byKey.set(row.key, row);
+  const byKey = new Map<string, T>();
+  for (const item of incoming) {
+    if (!byKey.has(item.key)) byKey.set(item.key, item.row);
   }
   const dropped: PickedDrop[] = [];
-  for (const key of picked.keys()) {
-    const row = byKey.get(key);
-    if (!row || row.sendable) continue; // 목록에 없음(㉡) 또는 아직 보낼 수 있음 → 유지
-    dropped.push({ key, reason: row.excludeReason || "제외" });
+  const next = new Map<string, T>();
+  let changed = false;
+  for (const [key, old] of picked) {
+    const fresh = byKey.get(key);
+    if (!fresh) {
+      next.set(key, old); // ㉡ 목록에 없음 → 그대로
+      continue;
+    }
+    if (!fresh.sendable) {
+      dropped.push({ key, reason: fresh.excludeReason || "제외" }); // ㉠ 뺀다
+      changed = true;
+      continue;
+    }
+    if (sameRow(old, fresh)) {
+      next.set(key, old);
+    } else {
+      next.set(key, fresh); // ㉢ 갈아 끼운다
+      changed = true;
+    }
   }
-  if (dropped.length === 0) return { picked, dropped };
-  const next = new Map(picked);
-  for (const d of dropped) next.delete(d.key);
-  return { picked: next, dropped };
+  return changed ? { picked: next, dropped } : { picked, dropped };
+}
+
+/**
+ * 자동으로 빠진 사람 알림을 **쌓는다**.
+ *
+ * ★검색어를 천천히 치면 조회가 여러 번 돈다. 새 응답으로 알림을 통째로 갈아치우면 첫 응답이
+ *  알린 「수신거부 1명 빠짐」이 곧바로 지워져 담당자는 인원이 왜 줄었는지 영영 못 본다.
+ *  같은 사람이 두 번 빠질 일은 없으니 열쇠로 합친다. 비우는 것은 **사람이 닫거나 발송이 시작될 때**뿐.
+ */
+export function mergeDropped(prev: PickedDrop[], next: PickedDrop[]): PickedDrop[] {
+  if (next.length === 0) return prev; // 다음 조회가 알림을 지우지 않는다
+  const by = new Map(prev.map((d) => [d.key, d] as const));
+  for (const d of next) by.set(d.key, d); // 자리는 그대로 두고 사유만 최신으로
+  return [...by.values()];
 }
 
 /**
@@ -127,20 +167,58 @@ export function resolveManagerScope(body: {
 
 /** 담당을 고를 수 없는 앱(파트너)에서 고르개 자리에 뜨는 글. */
 export const MANAGER_LOCKED_LABEL = "내 고객만 볼 수 있어요";
+/** 아직 잠금 여부를 모르는 동안 그 자리에 뜨는 글. */
+export const MANAGER_UNKNOWN_LABEL = "확인 중…";
+
+/** `null` = 아직 서버 답을 못 받아 **모름**. 모르는 동안엔 고르개를 그리지 않는다. */
+export type ManagerLock = boolean | null;
 
 /**
  * 담당 잠금 상태를 다음 값으로.
  *
  * ★조회가 **실패**하면 지금 상태를 그대로 지킨다 — 한 번 잠긴 사용자에게 갑자기 고르개가
- *  나타나면 「고를 수 있나 보다」로 읽는다. 서버가 값을 안 주는 앱(ERP)은 성공 응답에서
+ *  나타나면 「고를 수 있나 보다」로 읽는다. 첫 조회가 실패하면 `null`(모름)이 그대로 남아
+ *  화면은 고르개 대신 「확인 중」을 그린다. 서버가 값을 안 주는 앱(ERP)은 성공 응답에서
  *  false 가 되어 고르개가 그대로 뜬다.
  */
 export function nextManagerLock(
-  prev: boolean,
+  prev: ManagerLock,
   res: { ok: boolean; lockedToMe?: unknown },
-): boolean {
+): ManagerLock {
   if (!res.ok) return prev;
   return Boolean(res.lockedToMe);
+}
+
+/** 담당 자리에 무엇을 그릴지 — 모름이면 고르개를 아예 안 그린다(고를 수 없는 것을 내밀지 않게). */
+export function managerControl(lock: ManagerLock): "loading" | "locked" | "picker" {
+  if (lock === null) return "loading";
+  return lock ? "locked" : "picker";
+}
+
+/**
+ * 이 줄이 환불 고객인가 — **판정 근거는 환불일 하나뿐이다**(2026-09-04 사장님 확정).
+ *
+ * ★진행상태 글자에 「환불」이 있어도 환불일이 비면 환불로 보지 않는다. 실제로 그런 줄이 있다.
+ *  표의 빨간 띠와 3단계 경고가 같은 함수를 봐야 둘이 어긋나지 않는다.
+ */
+export function isRefunded(row: { refundedAt?: string | null }): boolean {
+  return Boolean(row.refundedAt && String(row.refundedAt).trim());
+}
+
+/**
+ * 표의 진행상태 딱지 — **색과 글자가 같은 값을 본다.**
+ *
+ * ★예전엔 색은 배열 전체에 「계약완료」가 있는지로 정하고 글자는 첫 값을 그려서,
+ *  `["진행중","계약완료"]` 면 **초록색 「진행중」** 이 떴다. 색이 거짓말을 한다.
+ *  「계약완료」가 들어 있으면 그 글자를 그린다 — 그 줄이 계약 고객이라는 게 요점이다.
+ */
+export function statusBadgeOf(
+  statuses: string[],
+): { label: string; variant: "green" | "default" } | null {
+  const list = statuses.filter((s) => s && s.trim());
+  if (list.length === 0) return null;
+  if (list.some((s) => s.trim() === "계약완료")) return { label: "계약완료", variant: "green" };
+  return { label: list[0].trim(), variant: "default" };
 }
 
 export function managerSelectOptions(

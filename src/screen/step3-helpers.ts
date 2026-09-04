@@ -1,7 +1,8 @@
 /** 알림톡 문안 `#{안내구분}` 에 그대로 들어가는 값. 비면 카카오가 거절할 수 있다. */
 import { isNoticeCategory } from "../rules/notice-category";
-// 사유별 건수 문법(「수신거부 1 · 중복 번호 1」)은 1단계 도우미가 정본이다 — 같은 뜻을 두 모양으로 그리지 않게.
-import { reasonCountsText } from "./step1-helpers";
+// 사유별 건수 문법(「수신거부 1 · 중복 번호 1」)과 환불 판정은 1단계 도우미가 정본이다 —
+// 같은 뜻을 두 모양으로 그리거나, 표와 발송 확인이 서로 다른 기준으로 환불을 세지 않게.
+import { isRefunded, reasonCountsText } from "./step1-helpers";
 export { NOTICE_CATEGORIES, isNoticeCategory } from "../rules/notice-category";
 export type { NoticeCategory } from "../rules/notice-category";
 
@@ -55,13 +56,54 @@ export function skippedNotice(raw: unknown): SkippedNotice | null {
     if (!item || typeof item !== "object") continue;
     const { reason, count } = item as { reason?: unknown; count?: unknown };
     if (typeof reason !== "string" || !reason.trim()) continue;
-    const n = typeof count === "number" && Number.isFinite(count) ? Math.trunc(count) : 0;
-    if (n <= 0) continue; // 0건 사유까지 늘어놓으면 「안 빠졌는데 빠졌다」로 읽힌다
+    // ★숫자로 받아 낸다 — 통로가 "2" 처럼 글자로 보내도 경고가 통째로 사라지면 안 된다.
+    //  같은 응답의 blockedCount·outOfScopeCount 도 화면이 Number(...) 로 받는다(동작을 맞춘다).
+    const n = Math.trunc(Number(count));
+    if (!Number.isFinite(n) || n <= 0) continue; // 0건 사유까지 늘어놓으면 「안 빠졌는데 빠졌다」로 읽힌다
     pairs.push({ reason: reason.trim(), count: n });
     total += n;
   }
   if (total === 0) return null;
   return { total, text: reasonCountsText(pairs) };
+}
+
+/** 발송 확인에 띄우는 환불 고객 경고. 없으면 null. */
+export interface RefundedNotice {
+  count: number;
+  /** 「가나다 · 라마바 외 3곳」 — 전부 늘어놓지 않는다. */
+  text: string;
+}
+
+/** 이름 몇 개만 보여 준다 — 전부 늘어놓으면 경고가 목록이 되어 안 읽힌다. */
+export const REFUNDED_NAMES_SHOWN = 2;
+
+/**
+ * 고른 명단에 섞인 환불 고객.
+ *
+ * ★전체 선택이 목록 아래쪽 환불 고객까지 담아도 3단계엔 인원수만 나와 다시 확인할 길이 없었다.
+ *  **고르는 동작은 그대로 두고**(사장님은 「표시」만 요구했다) 발송 직전에 알린다.
+ * ★판정은 `isRefunded` 하나뿐 — 진행상태 글자로 세지 않는다.
+ */
+export function refundedNotice(
+  selected: Array<{ refundedAt?: string | null; companyName?: string }>,
+  maxNames: number = REFUNDED_NAMES_SHOWN,
+): RefundedNotice | null {
+  const rows = selected.filter(isRefunded);
+  if (rows.length === 0) return null;
+  const names: string[] = [];
+  for (const r of rows) {
+    if (names.length >= Math.max(0, maxNames)) break;
+    const name = (r.companyName ?? "").trim();
+    if (name) names.push(name);
+  }
+  const rest = rows.length - names.length;
+  const text =
+    names.length === 0
+      ? ""
+      : rest > 0
+        ? `${names.join(" · ")} 외 ${rest}곳`
+        : names.join(" · ");
+  return { count: rows.length, text };
 }
 
 type BadgeVariant = "default" | "blue" | "green" | "red" | "yellow" | "purple";
