@@ -87,6 +87,7 @@ import {
   originalTooShort,
   readPlainTextStream,
   shouldAutoConvert,
+  showFillForm,
   step2FooterHint,
   testSendAllowed,
   uniqueNeedsFill,
@@ -658,6 +659,11 @@ export default function BulkMessageScreen() {
     originalText,
     lastConvertedOriginal,
     converting,
+  });
+  const fillFormVisible = showFillForm({
+    conversionReady: step2ConversionReady,
+    editing,
+    markerCount: fillMarkers.length,
   });
   const canTestSend = testSendAllowed({
     originalText,
@@ -1580,14 +1586,16 @@ export default function BulkMessageScreen() {
                 {adWords.join(" · ")} — 정보성 안내로 보내려면 이 표현을 빼는 편이 안전해요. 「직접 고치기」로 고칠 수 있습니다.
               </StatusBox>
             )}
-            {step2ConversionReady && !editing && fillMarkers.length > 0 && !fillsComplete && (
+            {/* ★입력칸은 「다 채웠나」로 숨기지 않는다 — showFillForm 주석(step2-helpers)의 사고를 다시 내지 마라.
+                「모두 채웠어요」는 입력칸을 갈아치우지 않고 그 아래에 안내만 덧붙인다. */}
+            {fillFormVisible && (
               <FillForm
                 markers={fillMarkers}
                 values={fillValues}
                 onChange={(marker, value) => setFillValues((prev) => ({ ...prev, [marker]: value }))}
               />
             )}
-            {step2ConversionReady && !editing && fillMarkers.length > 0 && fillsComplete && (
+            {fillFormVisible && fillsComplete && (
               <StatusBox tone="success" title="모두 채웠어요">
                 미리보기에 반영됐어요. 다음 단계로 갈 수 있어요.
               </StatusBox>
@@ -1689,11 +1697,14 @@ export default function BulkMessageScreen() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="inline-flex h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 text-wedly-label font-semibold text-wedly-muted break-keep">
+                    {/* ★알약 높이를 못 박지 않는다 — 좁은 화면(375px 이하)에서 긴 칩이 두 줄로 접히면
+                        h-[21px] 안에 28px 짜리 글자가 갇혀 테두리를 뚫고 나온다(2026-09-04 배포본 실측).
+                        min-h + 세로 여백으로 늘어나게 두되, 한 줄일 때는 14(줄높이)+2.5*2(여백)+1*2(테두리)=21px 로 이전과 같다. */}
+                    <div className="flex flex-wrap items-start gap-1.5">
+                      <span className="inline-flex min-h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 py-[2.5px] text-wedly-label leading-[14px] font-semibold text-wedly-muted break-keep">
                         부가세 별도
                       </span>
-                      <span className="inline-flex h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 text-wedly-label font-semibold text-wedly-muted break-keep">
+                      <span className="inline-flex min-h-[21px] items-center rounded-full border border-wedly-bd bg-white px-2 py-[2.5px] text-wedly-label leading-[14px] font-semibold text-wedly-muted break-keep">
                         알림톡 실패해도 문자로 대신 안 감
                       </span>
                     </div>

@@ -18,6 +18,7 @@ import {
   isAbortError,
   needsFillLabel,
   originalTooShort,
+  showFillForm,
   readPlainTextStream,
   shouldAutoConvert,
   step2FooterHint,
@@ -323,5 +324,33 @@ describe("testSendAllowed", () => {
       originalText: "",
       lastConvertedOriginal: "",
     })).toBe(false);
+  });
+});
+
+describe("채우기 입력칸 — 첫 글자를 치는 순간 사라지지 않는다", () => {
+  const markers = ["{{제출 기한}}", "{{담당자}}"];
+
+  it("칸마다 한 글자만 있어도 allFillsComplete 는 「다 채웠다」로 본다", () => {
+    // 이 헐거운 판정 자체는 그대로 둔다 — 다음 단계 이동 조건이 이미 이 셈에 기대고 있다.
+    expect(allFillsComplete(markers, { "{{제출 기한}}": "9", "{{담당자}}": "김" })).toBe(true);
+  });
+
+  it("그래서 입력칸 노출은 「다 채웠나」와 무관하다 — 한 글자여도 계속 보인다", () => {
+    // 「이번 달 말까지」의 첫 글자 9 를 친 순간. 예전엔 여기서 입력칸이 사라져 더 칠 수 없었다.
+    const values = { "{{제출 기한}}": "9", "{{담당자}}": "김" };
+    expect(allFillsComplete(markers, values)).toBe(true);
+    expect(showFillForm({ conversionReady: true, editing: false, markerCount: markers.length })).toBe(true);
+  });
+
+  it("값이 아예 없어도, 다 채웠어도 같은 답이다 — 노출은 값을 보지 않는다", () => {
+    const arg = { conversionReady: true, editing: false, markerCount: markers.length };
+    expect(showFillForm(arg)).toBe(showFillForm(arg));
+    expect(showFillForm(arg)).toBe(true);
+  });
+
+  it("변환 전·「직접 고치기」 중·표식 없음일 때만 감춘다", () => {
+    expect(showFillForm({ conversionReady: false, editing: false, markerCount: 2 })).toBe(false);
+    expect(showFillForm({ conversionReady: true, editing: true, markerCount: 2 })).toBe(false);
+    expect(showFillForm({ conversionReady: true, editing: false, markerCount: 0 })).toBe(false);
   });
 });

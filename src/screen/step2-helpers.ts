@@ -101,6 +101,24 @@ export function allFillsComplete(markers: string[], fills: Record<string, string
   return markers.every((m) => (fills[m] ?? "").trim().length > 0);
 }
 
+/**
+ * ★채우기 입력칸(FillForm)을 보일지 — 「다 채웠나」를 여기에 절대 넣지 마라.
+ *
+ * allFillsComplete 는 칸마다 **한 글자만 있어도** 「다 채웠다」로 본다. 그 판정 위에
+ * 「다 채웠으면 입력칸을 숨긴다」를 얹었더니, 「이번 달 말까지」를 치려고 첫 글자를 누르는
+ * 순간 입력칸이 통째로 사라져 더 칠 수 없었고 잘린 값이 그대로 고객에게 나갔다
+ * (2026-09-04 배포본 QA 실측 — 시험 발송 본문이 「서류를 사 준비해 주세요」로 잘려 나감).
+ * 그래서 입력칸은 **표식이 있고 「직접 고치기」 중이 아니면 언제나 보인다**.
+ * 「모두 채웠어요」 안내는 입력칸을 대체하지 말고 그 아래에 덧붙이기만 한다.
+ */
+export function showFillForm(input: {
+  conversionReady: boolean;
+  editing: boolean;
+  markerCount: number;
+}): boolean {
+  return input.conversionReady && !input.editing && input.markerCount > 0;
+}
+
 export function clampFillValue(value: string): string {
   if (value.length <= FILL_MAX_LEN) return value;
   return value.slice(0, FILL_MAX_LEN);

@@ -59,3 +59,61 @@ describe("1단계 첫 그림 — 배포 QA로 확인한 모습이 유지된다",
     expect(html).not.toContain('id="bm-manager"');
   });
 });
+
+describe("2단계 채우기 칸 — 「다 채웠나」로 숨기지 않는다", () => {
+  /** <FillForm ... /> 를 감싸는 조건식(그리는 자리 바로 앞의 { ... } && ) 을 통째로 꺼낸다. */
+  function fillFormGate(): string {
+    const at = source.indexOf("<FillForm\n");
+    expect(at, "<FillForm 을 그리는 자리가 있어야 한다").toBeGreaterThan(0);
+    const head = source.slice(0, at);
+    const open = head.lastIndexOf("\n            {");
+    expect(open, "FillForm 을 감싼 조건식의 시작").toBeGreaterThan(0);
+    return head.slice(open);
+  }
+
+  it("조건식에 fillsComplete 가 없다", () => {
+    // 배포본 실측(2026-09-04): !fillsComplete 로 감싸 두어, 한 글자만 쳐도 입력칸이 사라져
+    // 「서류를 사 준비해 주세요」처럼 잘린 본문이 그대로 발송됐다. 되살리지 마라.
+    expect(fillFormGate()).not.toContain("fillsComplete");
+  });
+
+  it("조건식은 showFillForm 하나로만 판단한다", () => {
+    expect(fillFormGate()).toContain("fillFormVisible");
+    expect(source).toContain("const fillFormVisible = showFillForm({");
+  });
+
+  it("「모두 채웠어요」 안내는 입력칸을 갈아치우지 않고 그 아래에 덧붙는다", () => {
+    const form = source.indexOf("<FillForm\n");
+    const done = source.indexOf('title="모두 채웠어요"');
+    expect(done, "「모두 채웠어요」 안내").toBeGreaterThan(form);
+    expect(source).toContain("{fillFormVisible && fillsComplete && (");
+  });
+});
+
+describe("3단계 예상 비용 칩 — 두 줄로 접혀도 테두리를 뚫지 않는다", () => {
+  /** 칩 글자 바로 앞의 <span ...> 여는 태그를 꺼낸다. */
+  function chipTag(text: string): string {
+    const at = source.indexOf(text);
+    expect(at, `칩 「${text}」`).toBeGreaterThan(0);
+    const head = source.slice(0, at);
+    const open = head.lastIndexOf("<span");
+    return head.slice(open);
+  }
+
+  for (const text of ["부가세 별도", "알림톡 실패해도 문자로 대신 안 감"]) {
+    it(`「${text}」 칩에 고정 높이가 없다`, () => {
+      // 배포본 375px 실측(2026-09-04): h-[21px] 안에서 두 줄(28px)이 위아래로 삐져나왔다.
+      const tag = chipTag(text);
+      expect(tag).not.toMatch(/[\s"]h-\[\d/);
+      expect(tag).toContain("min-h-[21px]");
+    });
+
+    it(`「${text}」 칩은 한 줄일 때 이전과 같은 21px 이다`, () => {
+      // 14(leading) + 2.5*2(py) + 1*2(border, box-sizing:border-box) = 21px
+      const tag = chipTag(text);
+      expect(tag).toContain("leading-[14px]");
+      expect(tag).toContain("py-[2.5px]");
+      expect(tag).toContain("border-wedly-bd");
+    });
+  }
+});
