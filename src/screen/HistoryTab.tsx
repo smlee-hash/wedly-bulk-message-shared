@@ -15,10 +15,13 @@ import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
 import { won } from "./bulk-ui";
+import { HistoryMailModal } from "./HistoryMailModal";
 import {
   HISTORY_MODE_OPTIONS,
   HISTORY_SEARCH_PLACEHOLDER,
+  MAIL_MISSING_NOTE,
   channelBadges,
+  companyJumpKey,
   companyMetaLine,
   emailSourceLabel,
   filterJobs,
@@ -27,20 +30,26 @@ import {
   historyEmptyText,
   jobMetaLine,
   lastSignalAt,
-  recipientSignalBadge,
   rowSignalBadge,
   signalBadge,
   type HistoryBadge,
   type HistoryCompanyDetail,
   type HistoryCompanyRow,
+  type HistoryJobRecipient,
   type HistoryJobRow,
+  type HistoryMailState,
   type HistoryMode,
 } from "./history-helpers";
-import type { RecipientRow } from "./useBulkState";
 
-/** 「준비 중」 단추가 왜 눌리지 않는지 — 표 밑에 **한 번만** 적는다(hover 로만 보이는 안내 금지). */
-const VIEW_MAIL_NOTE =
-  "「서식 보기」는 그 사람에게 실제로 나간 본문을 새 창으로 여는 자리예요. 수신자별 열쇠를 서버가 아직 목록에 안 실어 줘서 준비 중입니다.";
+/**
+ * 회사 상세의 「서식 보기」가 왜 아직 잠겨 있는지 — 표 밑에 **한 번만** 적는다.
+ *
+ * ★발송 상세에서는 열린다 — 서버 기록 상세 통로가 줄마다 수신자 열쇠를 실어 준다.
+ *  회사 이력 통로(`history?company=`)는 그 열쇠를 안 준다(서버 `CompanyHistoryItem` 에 칸이 없다).
+ *  그래서 이 표에서만 서식을 못 부른다 — 「준비 중」이라고만 적고 이유를 숨기지 않는다.
+ */
+const COMPANY_VIEW_MAIL_NOTE =
+  "이 표의 「서식 보기」는 아직 눌리지 않아요 — 회사 이력에는 수신자 열쇠가 실려 오지 않습니다. 발송별 보기에서 그 발송을 열면 서식을 볼 수 있어요.";
 
 /* ────────────────────────────── 작은 조각 ────────────────────────────── */
 
@@ -172,15 +181,19 @@ export interface HistoryTabProps {
   companies: HistoryCompanyRow[];
   view: "list" | "job" | "company";
   job: HistoryJobRow | null;
-  jobRecipients: RecipientRow[];
+  jobRecipients: HistoryJobRecipient[];
   company: HistoryCompanyDetail | null;
   loading: boolean;
   error: string;
   openJob: (job: HistoryJobRow) => void;
   openCompany: (key: string) => void;
-  openCompanyByName: (companyName: string) => void;
   closeDetail: () => void;
   retry: () => void;
+  /** 「서식 보기」 모달 — `null` 이면 닫힘. */
+  mail: HistoryMailState | null;
+  openMail: (r: HistoryJobRecipient) => void;
+  closeMail: () => void;
+  retryMail: () => void;
 }
 
 export function HistoryTab({
@@ -199,9 +212,12 @@ export function HistoryTab({
   error,
   openJob,
   openCompany,
-  openCompanyByName,
   closeDetail,
   retry,
+  mail,
+  openMail,
+  closeMail,
+  retryMail,
 }: HistoryTabProps) {
   // ★응답이 도착한 뒤에는 서버 결과를 그대로 믿는다 — 수신자 이름으로 걸린 발송은 목록 줄에
   //  회사 이름이 없어, 화면이 한 번 더 거르면 **맞는 결과가 조용히 사라진다.**
@@ -277,7 +293,8 @@ export function HistoryTab({
         <StatusBox tone="error" title="기록을 불러오지 못했어요" className="mb-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 break-keep">{error}</span>
-            {view === "list" && (
+            {/* 회사 이력만 빼고 다시 눌러 볼 수 있다 — 목록·발송 상세는 같은 조회를 다시 던진다. */}
+            {view !== "company" && (
               <Button type="button" variant="secondary" size="sm" onClick={retry}>
                 다시 시도
               </Button>
@@ -446,26 +463,33 @@ export function HistoryTab({
                 />
               ) : (
                 jobRecipients.map((r, i) => (
-                  <tr key={`${r.phone}-${i}`} className="border-t border-wedly-bd">
+                  <tr key={r.id || `${r.phone}-${i}`} className="border-t border-wedly-bd">
                     <td className={cn(TD, "min-w-0 break-keep")}>{r.companyName || "—"}</td>
                     <td className={cn(TD, "break-keep")}>{r.representative || "—"}</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{r.phone || "—"}</td>
                     <td className={cn(TD, "min-w-0 break-all")}>{r.email || "—"}</td>
-                    <td className="whitespace-nowrap px-3 py-2"><Signal badge={recipientSignalBadge(r)} /></td>
+                    <td className="whitespace-nowrap px-3 py-2"><Signal badge={rowSignalBadge(r)} /></td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums text-wedly-t2")}>
                       {formatHistoryTime(lastSignalAt(r))}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className="inline-flex flex-wrap items-center gap-2">
-                        <Button type="button" variant="secondary" size="xs" disabled>
+                        {/* 서식이 남아 있는 줄에만 열린다 — 없는 줄을 눌러 빈 모달을 띄우지 않는다. */}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="xs"
+                          onClick={() => openMail(r)}
+                          disabled={!r.hasMail}
+                        >
                           서식 보기
                         </Button>
                         <Button
                           type="button"
                           variant="link"
                           size="xs"
-                          onClick={() => openCompanyByName(r.companyName)}
-                          disabled={!r.companyName}
+                          onClick={() => openCompany(companyJumpKey(r))}
+                          disabled={!companyJumpKey(r)}
                         >
                           이 회사의 다른 발송 ›
                         </Button>
@@ -477,7 +501,7 @@ export function HistoryTab({
             </tbody>
           </TableBox>
           <p className="mt-2 text-wedly-hint text-wedly-muted break-keep">
-            {VIEW_MAIL_NOTE} 「이 회사의 다른 발송」은 사업장별 보기에서 그 회사 이름으로 찾아 드립니다.
+            {MAIL_MISSING_NOTE} 「이 회사의 다른 발송」은 그 회사가 받은 모든 안내를 바로 엽니다.
           </p>
         </>
       )}
@@ -543,7 +567,7 @@ export function HistoryTab({
             </tbody>
           </TableBox>
           <p className="mt-2 text-wedly-hint text-wedly-muted break-keep">
-            {VIEW_MAIL_NOTE} 이메일 서식은 90일 뒤 지워지지만 제목·본문 구획·신호는 남습니다.
+            {COMPANY_VIEW_MAIL_NOTE} 이메일 서식은 90일 뒤 지워지지만 제목·보낸 시각·신호는 남습니다.
           </p>
           {/* 회사 상세는 열쇠가 무엇이었는지도 밝힌다 — 「왜 이 줄들이 한 회사인가」의 근거다. */}
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-wedly-hint text-wedly-muted break-keep">
@@ -556,6 +580,9 @@ export function HistoryTab({
           </p>
         </>
       )}
+
+      {/* 서식 보기 — 어느 판에서 눌러도 이 하나가 뜬다. */}
+      <HistoryMailModal mail={mail} onClose={closeMail} onRetry={retryMail} />
     </Card>
   );
 }

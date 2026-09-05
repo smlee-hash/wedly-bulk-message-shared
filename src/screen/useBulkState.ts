@@ -74,10 +74,11 @@ import {
 } from "./step2-helpers";
 import {
   HISTORY_DEBOUNCE_MS,
-  HISTORY_JOB_FORBIDDEN,
   type HistoryCompanyDetail,
   type HistoryCompanyRow,
+  type HistoryJobRecipient,
   type HistoryJobRow,
+  type HistoryMailState,
   type HistoryMode,
 } from "./history-helpers";
 import {
@@ -1350,13 +1351,76 @@ export function useBulkState() {
   /** 지금 무엇을 보고 있나 — 목록 / 발송 상세 / 회사 상세. */
   const [historyView, setHistoryView] = useState<"list" | "job" | "company">("list");
   const [historyJob, setHistoryJob] = useState<HistoryJobRow | null>(null);
-  /** 고른 발송의 수신자별 신호 — `GET jobs/[id]` 응답(3단계 현황 표와 같은 줄). */
-  const [historyJobRecipients, setHistoryJobRecipients] = useState<RecipientRow[]>([]);
+  /**
+   * 고른 발송의 수신자별 신호 — **기록 상세 통로** 응답(`history/jobs/[id]`).
+   * ★3단계 진행 조회와 다른 줄이다 — 여기는 서버가 판정한 신호 한 마디와 회사 열쇠·서식 유무가 온다.
+   */
+  const [historyJobRecipients, setHistoryJobRecipients] = useState<HistoryJobRecipient[]>([]);
   const [historyCompany, setHistoryCompany] = useState<HistoryCompanyDetail | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
   /** 늦게 온 응답이 새 요청 결과를 덮지 않게 세는 번호(1단계 목록 조회와 같은 방식). */
   const historySeq = useRef(0);
+
+  // ── 「서식 보기」 모달 ─────────────────────────────────────────
+  //
+  // ★목록·상세 조회와 **다른 번호표**를 쓴다 — 서식을 불러오는 동안 뒤에서 목록이 바뀌어도
+  //  모달이 닫히거나 엉뚱한 서식이 들어오지 않게.
+  const [historyMail, setHistoryMail] = useState<HistoryMailState | null>(null);
+  const mailSeq = useRef(0);
+  /** 다시 시도가 무엇을 다시 부를지 — 누른 줄과 그 발송 번호를 그대로 들고 있는다. */
+  const mailTarget = useRef<{ jobId: string; r: HistoryJobRecipient } | null>(null);
+
+  const closeHistoryMail = useCallback(() => {
+    mailSeq.current += 1; // 돌아가는 중이던 서식 조회 응답은 버린다
+    mailTarget.current = null;
+    setHistoryMail(null);
+  }, []);
+
+  const loadHistoryMail = useCallback(async (jobId: string, r: HistoryJobRecipient) => {
+    const seq = ++mailSeq.current;
+    mailTarget.current = { jobId, r };
+    // 누른 줄의 신원을 먼저 세운다 — 불러오는 동안에도 「누구에게 간 서식인지」가 모달에 보여야 한다.
+    setHistoryMail({
+      recipientId: r.id,
+      companyName: r.companyName,
+      representative: r.representative,
+      phone: r.phone,
+      email: r.email,
+      subject: "",
+      html: "",
+      loading: true,
+      error: "",
+      expired: false,
+    });
+    try {
+      const res = await fetch(
+        `/api/bulk-message/history/jobs/${encodeURIComponent(jobId)}/mail?recipient=${encodeURIComponent(r.id)}`,
+      );
+      const j = await res.json().catch(() => null);
+      if (seq !== mailSeq.current) return;
+      if (!res.ok || j?.success !== true) {
+        throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
+      }
+      setHistoryMail((prev) =>
+        prev
+          ? {
+              ...prev,
+              subject: String(j.data?.subject ?? ""),
+              // 서버가 서식을 안 주면(지워졌거나 없는 줄) 빈 글자 — 화면이 지어내지 않는다.
+              html: String(j.data?.html ?? ""),
+              expired: j.data?.expired === true,
+              loading: false,
+            }
+          : prev,
+      );
+    } catch (e) {
+      if (seq !== mailSeq.current) return;
+      setHistoryMail((prev) =>
+        prev ? { ...prev, loading: false, error: loadErrorText(e, "서식을 불러오지 못했어요.") } : prev,
+      );
+    }
+  }, []);
 
   const loadHistory = useCallback(async () => {
     const seq = ++historySeq.current;
@@ -1393,17 +1457,19 @@ export function useBulkState() {
     return () => clearTimeout(timer);
   }, [historyActive, historyView, loadHistory]);
 
-  const retryHistory = useCallback(() => { void loadHistory(); }, [loadHistory]);
 
   /**
    * 발송 한 건의 수신자별 신호를 연다.
    *
-   * ★목록은 **같은 앱의 모든 직원 발송**을 보여 주는데, 상세를 여는 통로(`GET jobs/[id]`)는
-   *  「내가 보낸 것」만 연다(서버 `getJob` 의 senderEmail 검문). 그래서 남의 발송을 누르면
-   *  404 가 온다 — 그때는 「불러오지 못했어요」로 뭉뚱그리지 않고 이유를 그대로 적는다.
+   * ★**기록 상세 통로**를 부른다(`history/jobs/[id]`) — 3단계가 쓰는 진행 조회(`jobs/[id]`)가 아니다.
+   *  진행 조회는 「내가 보낸 것」만 열어 줘서, 목록에 보이는 남의 발송을 누르면 404 가 왔다.
+   *  기록 통로는 같은 앱의 모든 직원 발송을 열어 주므로 화면에서 막던 안내도 함께 걷어냈다.
+   * ★응답의 `job` 은 쓰지 않는다 — 머리 카드는 목록 줄이 들고 온 값(제목·통로)으로 그린다.
+   *  기록 상세 응답에는 제목·통로 칸이 없다.
    */
   const openHistoryJob = useCallback(async (job: HistoryJobRow) => {
     const seq = ++historySeq.current;
+    closeHistoryMail(); // 다른 발송을 열면 앞 발송의 서식 모달은 닫는다
     setHistoryView("job");
     setHistoryJob(job);
     setHistoryCompany(null);
@@ -1411,26 +1477,59 @@ export function useBulkState() {
     setHistoryLoading(true);
     setHistoryError("");
     try {
-      const res = await fetch(`/api/bulk-message/jobs/${encodeURIComponent(job.id)}`);
+      const res = await fetch(`/api/bulk-message/history/jobs/${encodeURIComponent(job.id)}`);
       const j = await res.json().catch(() => null);
       if (seq !== historySeq.current) return;
-      if (res.status === 404) throw new Error(HISTORY_JOB_FORBIDDEN);
       if (!res.ok || j?.success !== true) {
         throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
       }
       const rows = Array.isArray(j.data?.recipients) ? j.data.recipients : [];
-      setHistoryJobRecipients(rows as RecipientRow[]);
+      setHistoryJobRecipients(rows as HistoryJobRecipient[]);
     } catch (e) {
       if (seq !== historySeq.current) return;
       setHistoryError(loadErrorText(e, "발송 상세를 불러오지 못했어요."));
     } finally {
       if (seq === historySeq.current) setHistoryLoading(false);
     }
-  }, []);
+  }, [closeHistoryMail]);
 
-  /** 회사 한 곳이 받은 모든 안내를 연다(열쇠는 목록 줄이 들고 있는 서버 값 그대로). */
+  /** 누른 줄의 서식을 띄운다 — 어느 발송의 줄인지는 지금 열려 있는 발송 상세가 안다. */
+  const openHistoryMail = useCallback(
+    (r: HistoryJobRecipient) => {
+      const jobId = historyJob?.id ?? "";
+      if (!jobId || !r.id) return;
+      void loadHistoryMail(jobId, r);
+    },
+    [historyJob, loadHistoryMail],
+  );
+
+  const retryHistoryMail = useCallback(() => {
+    const t = mailTarget.current;
+    if (!t) return;
+    void loadHistoryMail(t.jobId, t.r);
+  }, [loadHistoryMail]);
+
+  /**
+   * 「다시 시도」 — 지금 보고 있는 판을 다시 부른다.
+   * ★발송 상세도 다시 부른다 — 남의 발송이라 막히던 갈래가 사라져, 여기서 나는 오류는
+   *  이제 일시적 실패다(눌러 볼 값어치가 있다).
+   */
+  const retryHistory = useCallback(() => {
+    if (historyView === "job" && historyJob) { void openHistoryJob(historyJob); return; }
+    void loadHistory();
+  }, [historyView, historyJob, openHistoryJob, loadHistory]);
+
+  /**
+   * 회사 한 곳이 받은 모든 안내를 연다(열쇠는 서버 값 그대로).
+   *
+   * ★사업장별 목록에서도, 발송 상세의 「이 회사의 다른 발송 ›」에서도 이 함수 하나로 온다.
+   *  그래서 보기를 「사업장별」로 함께 돌려놓는다 — 닫으면 「사업장 목록으로」 라고 적힌
+   *  단추가 실제로 사업장 목록으로 가야 한다.
+   */
   const openHistoryCompany = useCallback(async (key: string) => {
     const seq = ++historySeq.current;
+    closeHistoryMail();
+    setHistoryMode("companies");
     setHistoryView("company");
     setHistoryJob(null);
     setHistoryJobRecipients([]);
@@ -1451,35 +1550,18 @@ export function useBulkState() {
     } finally {
       if (seq === historySeq.current) setHistoryLoading(false);
     }
-  }, []);
+  }, [closeHistoryMail]);
 
   const closeHistoryDetail = useCallback(() => {
     historySeq.current += 1; // 돌아가는 중이던 상세 조회 응답은 버린다
+    closeHistoryMail();
     setHistoryView("list");
     setHistoryJob(null);
     setHistoryJobRecipients([]);
     setHistoryCompany(null);
     setHistoryError("");
     setHistoryLoading(false);
-  }, []);
-
-  /**
-   * 발송 상세의 「이 회사의 다른 발송 ›」 — 사업장별 보기로 건너뛴다.
-   *
-   * ★수신자 줄에는 **회사 열쇠가 없다**(서버 `getJob` 이 사업자번호·줄 번호를 안 내려 준다) —
-   *  그래서 회사 이력을 바로 열지 못하고, 회사명으로 검색해 그 회사 줄로 데려다 준다.
-   *  서버가 수신자 줄에 열쇠를 실어 주면 그때 곧장 여는 것으로 바꾼다.
-   */
-  const openCompanyByName = useCallback((companyName: string) => {
-    historySeq.current += 1;
-    setHistoryView("list");
-    setHistoryJob(null);
-    setHistoryJobRecipients([]);
-    setHistoryCompany(null);
-    setHistoryError("");
-    setHistoryMode("companies");
-    setHistoryQ(companyName);
-  }, []);
+  }, [closeHistoryMail]);
 
   // ── 단계 이동 가드 ───────────────────────────────────────────
   const targetsOk = canProceedWithTargets({
@@ -1755,7 +1837,10 @@ export function useBulkState() {
     openHistoryJob,
     openHistoryCompany,
     closeHistoryDetail,
-    openCompanyByName,
     retryHistory,
+    historyMail,
+    openHistoryMail,
+    closeHistoryMail,
+    retryHistoryMail,
   };
 }

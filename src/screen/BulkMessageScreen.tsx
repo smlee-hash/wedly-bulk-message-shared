@@ -396,7 +396,10 @@ export default function BulkMessageScreen() {
             error={s.historyError}
             openJob={s.openHistoryJob}
             openCompany={s.openHistoryCompany}
-            openCompanyByName={s.openCompanyByName}
+            mail={s.historyMail}
+            openMail={s.openHistoryMail}
+            closeMail={s.closeHistoryMail}
+            retryMail={s.retryHistoryMail}
             closeDetail={s.closeHistoryDetail}
             retry={s.retryHistory}
           />

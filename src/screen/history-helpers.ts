@@ -57,6 +57,50 @@ export interface HistoryCompanyRow {
   lastSignal: string;
 }
 
+/**
+ * 발송 한 건의 수신자 한 줄 — 서버 기록 상세 통로
+ * (`GET /api/bulk-message/history/jobs/[id]` 의 `recipients`).
+ *
+ * ★3단계 진행 조회(`GET jobs/[id]`)의 줄과 **다른 모양**이다 — 이 통로는 시각 칸을 세는 대신
+ *  서버가 이미 판정한 신호 한 마디(`emailSignal`·`chatSignal`)를 준다. 화면은 그것을 딱지로만 바꾼다.
+ * ★연락처·주소는 서버가 가려서 준다. `hasMail` 이 참인 줄만 서식을 띄울 수 있다.
+ */
+export interface HistoryJobRecipient {
+  id: string;
+  companyName: string;
+  representative: string;
+  phone: string;
+  email: string;
+  /** 사업장별 보기의 그 회사를 바로 여는 열쇠. 없는 줄이 있어 단추를 잠글 근거가 된다. */
+  companyKey: string;
+  chatSignal: string;
+  emailSignal: string;
+  viewedAt: string | null;
+  emailSentAt: string | null;
+  emailDeliveredAt: string | null;
+  emailViewedAt: string | null;
+  /** 이 줄에 띄울 서식이 남아 있나(90일이 지나면 거짓). */
+  hasMail: boolean;
+}
+
+/**
+ * 「서식 보기」 모달의 상태 — 누른 줄의 신원 + 서버가 준 서식.
+ * ★`null` 이면 모달이 닫혀 있다는 뜻이다(따로 open 칸을 두지 않는다).
+ */
+export interface HistoryMailState {
+  recipientId: string;
+  companyName: string;
+  representative: string;
+  phone: string;
+  email: string;
+  subject: string;
+  html: string;
+  loading: boolean;
+  error: string;
+  /** 보관 기간이 지나 서버가 서식을 지웠다. */
+  expired: boolean;
+}
+
 /** 회사 한 곳이 받은 안내 한 줄 — 서버 `CompanyHistoryItem`. */
 export interface HistoryCompanyItem {
   jobId: string;
@@ -90,15 +134,18 @@ export const HISTORY_DEBOUNCE_MS = 300;
 export const HISTORY_SEARCH_PLACEHOLDER =
   "회사명 · 대표자명 · 연락처 뒷자리 · 이메일 · 제목 · 보낸 사람으로 검색";
 
-/**
- * 남이 보낸 발송의 상세를 눌렀을 때.
- *
- * ★목록은 같은 앱의 **모든 직원 발송**을 보여 주지만, 상세를 여는 통로는 「내가 보낸 것」만 연다
- *  (서버 `getJob` 의 senderEmail 검문). 「불러오지 못했어요」로 뭉뚱그리면 담당자가
- *  고장으로 읽고 계속 다시 누른다.
- */
-export const HISTORY_JOB_FORBIDDEN =
-  "이 발송은 다른 담당자가 보낸 것이라 수신자 목록을 열 수 없어요. 사업장별 보기에서는 그 회사가 받은 안내를 볼 수 있어요.";
+/** 서식이 없는 줄의 「서식 보기」가 왜 잠겨 있는지 — 표 밑에 **한 번만** 적는다. */
+export const MAIL_MISSING_NOTE =
+  "「서식 보기」는 그 사람에게 실제로 나간 본문을 그대로 띄웁니다. 이메일이 안 나간 줄과 보관 기간(90일)이 지난 줄은 띄울 서식이 없어 잠깁니다.";
+
+/** 서식이 지워졌을 때의 제목·다음 행동(서버 `expired: true`). */
+export const MAIL_EXPIRED_TITLE = "보관 기간(90일)이 지나 서식이 지워졌어요";
+export const MAIL_EXPIRED_HINT =
+  "제목·보낸 시각·신호 기록은 그대로 남아 있어요. 같은 내용을 다시 보내려면 「발송하기」 탭에서 새로 작성해 주세요.";
+
+/** 서버가 서식을 안 준 줄(지워진 것도, 오류도 아닌 경우). */
+export const MAIL_EMPTY_TITLE = "보여 줄 서식이 없어요";
+export const MAIL_EMPTY_HINT = "이 줄에는 남아 있는 메일 본문이 없습니다. 제목·신호 기록은 위 표에 그대로 있어요.";
 
 export function historyModeLabel(mode: HistoryMode): string {
   return mode === "companies" ? "사업장별" : "발송별";
@@ -314,28 +361,19 @@ export function jobMetaLine(job: HistoryJobRow): string {
 /* ────────────────────── 발송 상세(수신자 줄) ────────────────────── */
 
 /**
- * 발송 상세 표의 신호 딱지.
+ * 「이 회사의 다른 발송 ›」이 열 회사 열쇠.
  *
- * ★이메일 신호는 **3단계 발송 현황이 쓰는 그 함수**(`step3-helpers.emailSignalOf`)를 그대로 쓴다 —
- *  같은 조회(`GET jobs/[id]`)의 같은 줄을 두 화면이 그리므로, 여기서 따로 세면 한 사람이
- *  3단계에서는 「도착」, 발송 기록에서는 다른 말로 보인다.
- * ★이메일 신호가 없으면 채팅 신호를 본다(서버 `chatSignalOf` 와 같은 순서).
- * ★그것도 없으면 원본 상태로 「발송 대기 / 중단됨 / 보내지 못함」을 가른다.
+ * ★예전에는 회사명으로 **검색해서** 데려다줬다 — 같은 이름의 다른 회사가 있으면 엉뚱한 줄이 걸리고,
+ *  이름이 빈 줄은 아예 못 갔다. 이제 서버가 줄마다 열쇠를 실어 주므로 그 회사 상세를 바로 연다.
+ * ★열쇠가 없으면 빈 글자 — 화면은 그 단추를 잠근다(엉뚱한 회사를 여느니 안 여는 게 낫다).
  */
-export function recipientSignalBadge(r: {
-  emailStatus?: string | null;
-  emailSkipReason?: string | null;
-  emailSentAt?: string | null;
-  emailDeliveredAt?: string | null;
-  emailViewedAt?: string | null;
-  viewedAt?: string | null;
-  alimtalkStatus?: string | null;
-}): HistoryBadge | null {
-  const email = emailSignalOf(r);
-  if (email) return { label: email.label, variant: email.variant, strong: email.label === "확인함" };
-  if (r.viewedAt) return signalBadge("열어 봄");
-  if (String(r.alimtalkStatus ?? "").trim() === "sent") return signalBadge("알림 보냄");
-  return signalBadge(fallbackSignalLabel(r.emailStatus));
+export function companyJumpKey(r: { companyKey?: string | null }): string {
+  return String(r.companyKey ?? "").trim();
+}
+
+/** 서식 모달의 제목 — 제목이 없으면 지어내지 않고 자리 이름만 쓴다. */
+export function mailModalTitle(subject: string | null | undefined): string {
+  return String(subject ?? "").trim() || "보낸 서식";
 }
 
 /**

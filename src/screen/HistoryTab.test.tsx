@@ -1,8 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HistoryTab, type HistoryTabProps } from "./HistoryTab";
-import type { HistoryCompanyDetail, HistoryCompanyRow, HistoryJobRow } from "./history-helpers";
-import type { RecipientRow } from "./useBulkState";
+import type {
+  HistoryCompanyDetail,
+  HistoryCompanyRow,
+  HistoryJobRecipient,
+  HistoryJobRow,
+  HistoryMailState,
+} from "./history-helpers";
 
 // 발송 기록 탭을 **실제로 그려서** 잰다 — 시안(2026-09-04-email-send-preview.html 「발송 기록」)의
 // 자리·문구가 살아 있는지, 그리고 안 쓴 통로에 「0」이 서지 않는지 소스 글자 검사보다 강하게 본다.
@@ -43,20 +48,37 @@ function companyRow(over: Partial<HistoryCompanyRow> = {}): HistoryCompanyRow {
   };
 }
 
-function recipient(over: Partial<RecipientRow> = {}): RecipientRow {
+function recipient(over: Partial<HistoryJobRecipient> = {}): HistoryJobRecipient {
   return {
+    id: "r1",
     companyName: "(주)한빛정밀",
     representative: "김대표",
     phone: "010-2•••-4567",
-    error: "",
-    status: "sent",
-    alimtalkStatus: "",
-    viewedAt: null,
     email: "ha***@hanbit.kr",
-    emailSource: "basic",
-    emailStatus: "delivered",
+    companyKey: "b:1234567890",
+    chatSignal: "",
+    emailSignal: "도착",
+    viewedAt: null,
     emailSentAt: "2026-09-04T01:12:00.000Z",
     emailDeliveredAt: "2026-09-04T01:13:00.000Z",
+    emailViewedAt: null,
+    hasMail: true,
+    ...over,
+  };
+}
+
+function mailState(over: Partial<HistoryMailState> = {}): HistoryMailState {
+  return {
+    recipientId: "r1",
+    companyName: "(주)한빛정밀",
+    representative: "김대표",
+    phone: "010-2•••-4567",
+    email: "ha***@hanbit.kr",
+    subject: "장려금 2차 서류 제출 안내",
+    html: "",
+    loading: false,
+    error: "",
+    expired: false,
     ...over,
   };
 }
@@ -78,9 +100,12 @@ function props(over: Partial<HistoryTabProps> = {}): HistoryTabProps {
     error: "",
     openJob: () => {},
     openCompany: () => {},
-    openCompanyByName: () => {},
     closeDetail: () => {},
     retry: () => {},
+    mail: null,
+    openMail: () => {},
+    closeMail: () => {},
+    retryMail: () => {},
     ...over,
   };
 }
@@ -220,7 +245,10 @@ describe("발송 상세", () => {
   const html = draw({
     view: "job",
     job: job(),
-    jobRecipients: [recipient(), recipient({ companyName: "미래테크(주)", emailStatus: "bounced" })],
+    jobRecipients: [
+      recipient(),
+      recipient({ id: "r2", companyName: "미래테크(주)", emailSignal: "반송·거부", companyKey: "b:2222222222" }),
+    ],
   });
 
   it("머리 카드에 제목·시각·보낸 사람·통로·인원·앱이 있다", () => {
@@ -250,21 +278,94 @@ describe("발송 상세", () => {
     expect(html).toContain("이 회사의 다른 발송 ›");
   });
 
+  it("남의 발송도 열린다 — 「다른 담당자」 안내를 더는 그리지 않는다", () => {
+    const other = draw({
+      view: "job",
+      job: job({ senderName: "이세훈", senderEmail: "sehun@wedly.kr" }),
+      jobRecipients: [recipient()],
+    });
+    expect(other).toContain("(주)한빛정밀");
+    expect(other).not.toContain("다른 담당자");
+  });
+
+  it("「서식 보기」는 남아 있는 줄에서만 눌린다", () => {
+    const one = draw({ view: "job", job: job(), jobRecipients: [recipient({ hasMail: true })] });
+    expect(one).toContain("서식 보기");
+    const none = draw({ view: "job", job: job(), jobRecipients: [recipient({ hasMail: false })] });
+    // 서식이 없는 줄의 단추만 잠긴다 — 이유는 표 밑 한 줄이 따로 밝힌다.
+    expect((none.match(/disabled/g) ?? []).length).toBeGreaterThan((one.match(/disabled/g) ?? []).length);
+  });
+
+  it("「이 회사의 다른 발송」은 회사 열쇠가 있는 줄에서만 눌린다", () => {
+    const keyed = draw({ view: "job", job: job(), jobRecipients: [recipient({ companyKey: "b:1234567890" })] });
+    const keyless = draw({ view: "job", job: job(), jobRecipients: [recipient({ companyKey: "" })] });
+    expect((keyless.match(/disabled/g) ?? []).length).toBeGreaterThan((keyed.match(/disabled/g) ?? []).length);
+  });
+
+  it("수신자별 열쇠가 없다는 옛 사유 줄은 사라졌다", () => {
+    expect(html).not.toContain("수신자별 열쇠");
+  });
+
   it("「목록으로」로 돌아간다", () => {
     expect(html).toContain("발송 목록으로");
   });
 
-  it("수신자를 못 불러오면 빈 표에 이유를 가리킨다", () => {
+  it("수신자를 못 불러오면 빈 표에 이유를 가리키고 다시 시도를 준다", () => {
     const bad = draw({
       view: "job",
       job: job(),
       jobRecipients: [],
-      error: "이 발송은 다른 담당자가 보낸 것이라 수신자 목록을 열 수 없어요.",
+      error: "발송 상세를 불러오지 못했어요.",
     });
-    expect(bad).toContain("다른 담당자가 보낸 것이라");
+    expect(bad).toContain("발송 상세를 불러오지 못했어요");
     expect(bad).toContain("보여 줄 수신자가 없어요");
-    // 남의 발송이면 「다시 시도」를 내밀지 않는다 — 눌러도 같은 답이 온다.
-    expect(bad).not.toContain("다시 시도");
+    // 이제 막힘이 아니라 일시적 실패다 — 다시 눌러 볼 자리를 준다.
+    expect(bad).toContain("다시 시도");
+  });
+});
+
+describe("서식 보기 모달", () => {
+  const base: Partial<HistoryTabProps> = { view: "job", job: job(), jobRecipients: [recipient()] };
+
+  it("안 열었으면 모달이 없다", () => {
+    expect(draw(base)).not.toContain('role="dialog"');
+  });
+
+  it("제목과 받는 사람을 머리에 적고 닫기를 준다", () => {
+    const html = draw({ ...base, mail: mailState({ loading: true }) });
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain("장려금 2차 서류 제출 안내");
+    expect(html).toContain("ha***@hanbit.kr");
+    expect(html).toContain("닫기");
+  });
+
+  it("불러오는 동안 자리지킴을 그린다", () => {
+    const html = draw({ ...base, mail: mailState({ loading: true }) });
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain("animate-pulse");
+  });
+
+  it("서식이 오면 iframe 으로 그대로 띄운다", () => {
+    const html = draw({ ...base, mail: mailState({ html: "<p>안녕하세요 대표님</p>" }) });
+    expect(html).toContain("<iframe");
+    expect(html).toContain("srcDoc=");
+    expect(html).toContain("안녕하세요 대표님");
+    // 서버가 그린 서식만 띄운다 — 안에서 스크립트가 돌지 않게 잠근다.
+    expect(html).toContain('sandbox="allow-same-origin"');
+  });
+
+  it("오류면 이유와 다시 시도를 준다", () => {
+    const html = draw({ ...base, mail: mailState({ error: "잠시 후 다시 시도해 주세요." }) });
+    expect(html).toContain("서식을 불러오지 못했어요");
+    expect(html).toContain("잠시 후 다시 시도해 주세요.");
+    expect(html).toContain("다시 시도");
+  });
+
+  it("보관 기간이 지났으면 그 이유와 남는 것을 밝힌다", () => {
+    const html = draw({ ...base, mail: mailState({ expired: true }) });
+    expect(html).toContain("보관 기간(90일)이 지나 서식이 지워졌어요");
+    expect(html).toContain("제목");
+    expect(html).not.toContain("<iframe");
   });
 });
 

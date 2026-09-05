@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import * as helpers from "./history-helpers";
 import {
   HISTORY_DEBOUNCE_MS,
   HISTORY_MODE_OPTIONS,
+  MAIL_EXPIRED_TITLE,
   channelBadges,
+  companyJumpKey,
   companyMetaLine,
   emailSourceLabel,
   fallbackSignalLabel,
@@ -13,10 +16,11 @@ import {
   historyModeLabel,
   jobMetaLine,
   lastSignalAt,
+  mailModalTitle,
   normalizeHistoryQuery,
-  recipientSignalBadge,
   rowSignalBadge,
   signalBadge,
+  type HistoryJobRecipient,
   type HistoryJobRow,
 } from "./history-helpers";
 
@@ -300,37 +304,67 @@ describe("보기 이름·상수", () => {
   });
 });
 
-describe("recipientSignalBadge — 3단계 발송 현황과 같은 글자를 쓴다", () => {
-  it("이메일 신호가 있으면 그것을 그린다(확인함만 굵게)", () => {
-    expect(recipientSignalBadge({ emailViewedAt: "2026-09-04T02:00:00Z" })).toEqual({
-      label: "확인함",
-      variant: "green",
-      strong: true,
-    });
-    expect(recipientSignalBadge({ emailDeliveredAt: "2026-09-04T02:00:00Z" })).toEqual({
-      label: "도착",
-      variant: "blue",
-      strong: false,
-    });
+function recipient(over: Partial<HistoryJobRecipient> = {}): HistoryJobRecipient {
+  return {
+    id: "r1",
+    companyName: "(주)한빛정밀",
+    representative: "김대표",
+    phone: "010-2•••-4567",
+    email: "ha***@hanbit.kr",
+    companyKey: "b:1234567890",
+    chatSignal: "",
+    emailSignal: "도착",
+    viewedAt: null,
+    emailSentAt: "2026-09-04T01:12:00.000Z",
+    emailDeliveredAt: "2026-09-04T01:13:00.000Z",
+    emailViewedAt: null,
+    hasMail: true,
+    ...over,
+  };
+}
+
+describe("수신자 줄의 신호는 서버가 준 한 마디를 그대로 쓴다", () => {
+  it("이메일 신호가 먼저, 없으면 채팅 신호", () => {
+    expect(rowSignalBadge(recipient({ emailSignal: "확인함", chatSignal: "열어 봄" }))?.label).toBe("확인함");
+    expect(rowSignalBadge(recipient({ emailSignal: "", chatSignal: "알림 보냄" }))?.label).toBe("알림 보냄");
   });
 
-  it("이메일 신호가 없으면 채팅 신호를 본다", () => {
-    expect(recipientSignalBadge({ viewedAt: "2026-09-04T02:00:00Z" })?.label).toBe("열어 봄");
-    expect(recipientSignalBadge({ alimtalkStatus: "sent" })?.label).toBe("알림 보냄");
+  it("둘 다 비어 있으면 「—」로 그리게 null 을 준다", () => {
+    expect(rowSignalBadge(recipient({ emailSignal: "", chatSignal: "" }))).toBeNull();
+  });
+});
+
+describe("남의 발송도 열린다 — 막던 문구가 사라졌다", () => {
+  it("HISTORY_JOB_FORBIDDEN 은 더 이상 내보내지 않는다", () => {
+    // 서버 기록 상세 통로가 같은 앱의 모든 직원 발송을 열어 준다 — 화면이 막을 이유가 없다.
+    expect(Object.keys(helpers)).not.toContain("HISTORY_JOB_FORBIDDEN");
+  });
+});
+
+describe("companyJumpKey — 「이 회사의 다른 발송 ›」이 열 열쇠", () => {
+  it("서버가 준 회사 열쇠를 그대로 쓴다(회사명 검색이 아니다)", () => {
+    expect(companyJumpKey(recipient({ companyKey: "b:1234567890" }))).toBe("b:1234567890");
   });
 
-  it("둘 다 없으면 원본 상태로 발송 대기·중단됨을 가른다", () => {
-    expect(recipientSignalBadge({ emailStatus: "pending" })?.label).toBe("발송 대기");
-    expect(recipientSignalBadge({ emailStatus: "revoked" })?.label).toBe("중단됨");
-    expect(recipientSignalBadge({ emailStatus: "failed" })?.label).toBe("보내지 못함");
+  it("열쇠가 없으면 빈 글자 — 화면은 그 단추를 잠근다", () => {
+    expect(companyJumpKey(recipient({ companyKey: "" }))).toBe("");
+    expect(companyJumpKey({})).toBe("");
+    expect(companyJumpKey({ companyKey: "  " })).toBe("");
+  });
+});
+
+describe("mailModalTitle — 서식 모달의 제목", () => {
+  it("제목이 있으면 그 제목을 쓴다", () => {
+    expect(mailModalTitle("장려금 2차 서류 제출 안내")).toBe("장려금 2차 서류 제출 안내");
   });
 
-  it("아무 신호도 없으면 null — 표는 「—」로 그린다", () => {
-    expect(recipientSignalBadge({})).toBeNull();
+  it("제목이 없으면 지어내지 않고 자리 이름만 쓴다", () => {
+    expect(mailModalTitle("")).toBe("보낸 서식");
+    expect(mailModalTitle("   ")).toBe("보낸 서식");
   });
 
-  it("제외된 줄은 사유를 그대로 보여 준다", () => {
-    expect(recipientSignalBadge({ emailStatus: "skipped", emailSkipReason: "수신거부" })?.label).toBe("수신거부");
+  it("보관 기간 안내는 90일을 그대로 밝힌다", () => {
+    expect(MAIL_EXPIRED_TITLE).toContain("90일");
   });
 });
 
