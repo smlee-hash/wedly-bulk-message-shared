@@ -292,3 +292,195 @@ export function step1ListPhase(input: { loading: boolean; loadError?: string }):
   if (input.loadError) return "error";
   return "ready";
 }
+
+// ────────────────────────────────────────────── 채널(알림톡·채팅 / 이메일 / 둘 다)
+//
+// 2026-09-05 이메일 채널 추가. 화면의 정본은 승인 시안
+// docs/superpowers/specs/2026-09-04-email-send-preview.html §1단계.
+
+export type BulkChannel = "chat" | "email" | "both";
+
+/** 구간 단추 3개 — 값·글자·순서의 정본. */
+export const CHANNEL_OPTIONS: Array<{ value: BulkChannel; label: string }> = [
+  { value: "chat", label: "알림톡·채팅" },
+  { value: "email", label: "이메일" },
+  { value: "both", label: "둘 다" },
+];
+
+const CHANNEL_NOTES: Record<BulkChannel, string> = {
+  chat: "지금과 같습니다 — 채널톡 상담방에 본문을 심고 알림톡으로 도착을 알립니다(문자는 막아 둔 채널).",
+  email:
+    "이메일은 주소가 있는 분에게만 나갑니다. 주소가 없는 분은 표에 「이메일 없음」으로 그대로 보이고, 칸에서 직접 입력할 수 있어요.",
+  both: "알림톡·채팅은 번호가 있는 분에게, 이메일은 주소가 있는 분에게 각각 나갑니다. 둘 다 있는 분은 두 통로로 받습니다.",
+};
+
+/** 구간 단추 밑에 붙는 한 줄 설명 — 고른 통로가 무엇을 하는지. */
+export function channelNote(channel: BulkChannel): string {
+  return CHANNEL_NOTES[channel];
+}
+
+/** 이메일 열·이메일 카드·경고 상자를 그리는 채널인가. */
+export function emailMode(channel: BulkChannel): boolean {
+  return channel !== "chat";
+}
+
+/**
+ * 채널 판정에 필요한 줄의 칸들.
+ * 번호 쪽(`sendable`·`excludeReason`)과 이메일 쪽(`emailSendable`·`emailExcludeReason`)은
+ * **서로 독립**이다 — 번호가 없어도 주소가 있으면 이메일로는 보낼 수 있다(서버 판정과 같은 규칙).
+ */
+export interface ChannelTarget {
+  sendable: boolean;
+  excludeReason: string;
+  email: string;
+  emailSource: string;
+  emailSendable: boolean;
+  emailExcludeReason: string;
+}
+
+/** 이 채널로 이 줄에 보낼 수 있나 — 「둘 다」는 하나만 되어도 보낸다(각 통로로 각각 나간다). */
+export function sendableForChannel<T extends ChannelTarget>(t: T, channel: BulkChannel): boolean {
+  if (channel === "chat") return Boolean(t.sendable);
+  if (channel === "email") return Boolean(t.emailSendable);
+  return Boolean(t.sendable) || Boolean(t.emailSendable);
+}
+
+/**
+ * 표의 발송 칩에 적을 사유.
+ *
+ * ★「둘 다」에서 막힌 줄은 **두 사유를 다 적는다.** 한쪽만 적으면(예: 「이메일 없음」)
+ *  번호도 없다는 사실이 화면에서 사라져, 담당자는 번호만 채우면 갈 줄로 읽는다.
+ */
+export function channelExcludeReason<T extends ChannelTarget>(t: T, channel: BulkChannel): string {
+  if (sendableForChannel(t, channel)) return "";
+  if (channel === "chat") return t.excludeReason || "제외";
+  if (channel === "email") return t.emailExcludeReason || "이메일 없음";
+  const reasons = [t.excludeReason || "제외", t.emailExcludeReason || "이메일 없음"];
+  return reasons[0] === reasons[1] ? reasons[0] : reasons.join(" · ");
+}
+
+/** 아직 값이 없을 뿐인 사유 — 채우면 보낼 수 있다(금색). 나머지는 막힌 것이라 빨강. */
+const SOFT_EXCLUDE_REASONS = new Set(["번호 없음", "이메일 없음"]);
+
+/** 발송 칩 색 — 사유 글자 하나만 보고 정한다(색과 글자가 어긋나지 않게). */
+export function excludeChipVariant(reason: string): "yellow" | "red" {
+  const parts = reason.split("·").map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => SOFT_EXCLUDE_REASONS.has(p)) ? "yellow" : "red";
+}
+
+/**
+ * 채널 기준의 「보낼 수 있나」·사유로 갈아 끼운 줄.
+ *
+ * ★표·전체 고르기·명단 손질(reconcilePicked)이 전부 `sendable` 한 칸만 본다 —
+ *  채널을 여기서 한 번 녹여 두면 그 아래는 채널을 몰라도 된다.
+ * 바뀔 게 없으면 **받은 줄을 그대로** 돌려준다(화면이 괜히 다시 그려지지 않게).
+ */
+export function targetForChannel<T extends ChannelTarget>(t: T, channel: BulkChannel): T {
+  const sendable = sendableForChannel(t, channel);
+  const excludeReason = channelExcludeReason(t, channel);
+  if (sendable === t.sendable && excludeReason === t.excludeReason) return t;
+  return { ...t, sendable, excludeReason };
+}
+
+/** 손으로 넣은 이메일 — `persist` 는 「고객 자료에도 저장」 스위치. */
+export interface ManualEmail {
+  email: string;
+  persist: boolean;
+}
+
+/** 직접 입력한 주소를 줄에 얹는다 — 그 줄은 그때부터 보낼 수 있는 줄이다(출처는 「manual」). */
+export function applyManualEmail<T extends ChannelTarget>(t: T, manual?: ManualEmail): T {
+  if (!manual || !manual.email) return t;
+  return { ...t, email: manual.email, emailSource: "manual", emailSendable: true, emailExcludeReason: "" };
+}
+
+export interface EmailTargetCounts {
+  /** 계약한 고객(검색 중이면 검색에 걸린 고객) */
+  contract: number;
+  /** 알림톡 가능 — 번호 기준 */
+  chatOk: number;
+  /** 이메일 가능 — 주소 기준 */
+  emailOk: number;
+  /** 자동 제외 — **고른 채널로** 못 보내는 줄 수 */
+  excluded: number;
+}
+
+/**
+ * 숫자 카드 4장의 값.
+ *
+ * ★앞 세 숫자는 채널과 상관없이 같다(사실이라서). **자동 제외만 채널 기준**이다 —
+ *  이메일로 보내는데 「번호 없음」을 제외로 세면 담당자가 보낼 수 있는 사람을 놓친다.
+ */
+export function emailTargetCounts<T extends ChannelTarget>(
+  targets: T[],
+  channel: BulkChannel,
+): EmailTargetCounts {
+  let chatOk = 0;
+  let emailOk = 0;
+  let excluded = 0;
+  for (const t of targets) {
+    if (t.sendable) chatOk += 1;
+    if (t.emailSendable) emailOk += 1;
+    if (!sendableForChannel(t, channel)) excluded += 1;
+  }
+  return { contract: targets.length, chatOk, emailOk, excluded };
+}
+
+export const MANUAL_EMAIL_FORMAT_ERROR = "이메일 형식이 아니에요 (예: ceo@company.co.kr)";
+export const MANUAL_EMAIL_DUPLICATE_ERROR = "이 발송의 다른 회사와 같은 주소예요 — 중복으로 제외돼요";
+export const MANUAL_EMAIL_OPTOUT_ERROR = "수신거부한 주소예요 — 보낼 수 없어요";
+
+/** 서버(targets.ts normalizeEmail)와 같은 형식 검사. */
+const MANUAL_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** 비교·저장은 늘 소문자·공백 없는 꼴로 — 대문자로 친 주소가 중복 검사를 빠져나가지 않게. */
+export function normalizeManualEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * 손으로 친 주소 즉시 검사 — 통과하면 빈 글자.
+ *
+ * ★오타 한 글자면 **다른 사람에게 계약 안내가 간다.** 그래서 세 가지를 화면에서 먼저 막는다:
+ *  ① 형식 ② 수신거부(서버가 「수신거부」로 내려준 줄의 주소) ③ 이 발송 안 다른 회사와 같은 주소.
+ * ★수신거부 명단을 화면이 따로 들고 있지 않다 — 목록 응답의 `emailExcludeReason` 이 유일한 근거다.
+ *  (서버가 발송 직전에 한 번 더 거른다. 화면 검사는 담당자에게 **왜 안 되는지**를 알리는 몫.)
+ */
+export function validateManualEmail(
+  value: string,
+  targets: Array<{ rowId: string; email: string; emailExcludeReason: string }>,
+  rowId: string,
+): string {
+  const v = normalizeManualEmail(value);
+  if (!MANUAL_EMAIL_RE.test(v)) return MANUAL_EMAIL_FORMAT_ERROR;
+  for (const t of targets) {
+    if (t.emailExcludeReason === "수신거부" && normalizeManualEmail(t.email) === v) {
+      return MANUAL_EMAIL_OPTOUT_ERROR;
+    }
+  }
+  for (const t of targets) {
+    if (t.rowId === rowId) continue;
+    if (normalizeManualEmail(t.email) === v) return MANUAL_EMAIL_DUPLICATE_ERROR;
+  }
+  return "";
+}
+
+/**
+ * 아래 단추 옆 「지금 고른 사람 N명 · 이메일 M명」.
+ *
+ * ★`total` 은 담은 그대로 센다 — 검색·담당을 바꿔 화면에서 사라진 사람도 명단에는 남아 있고
+ *  (그 수는 옆에 따로 알린다), 채널 기준으로 못 보내게 된 사람은 이미 명단에서 빠진 뒤다.
+ */
+export function pickedCounts<T extends { emailSendable: boolean }>(
+  picked: Iterable<T>,
+  channel: BulkChannel,
+): { total: number; email: number } {
+  let total = 0;
+  let email = 0;
+  const counts = emailMode(channel);
+  for (const t of picked) {
+    total += 1;
+    if (counts && t.emailSendable) email += 1;
+  }
+  return { total, email };
+}

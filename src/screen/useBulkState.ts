@@ -15,7 +15,10 @@ import { detectAdWords } from "../rules/checks";
 import { MAX_RECIPIENTS } from "./limits";
 import {
   MANAGER_MINE,
+  applyManualEmail,
   canProceedWithTargets,
+  emailMode,
+  emailTargetCounts,
   hiddenPickedCount,
   listFetchDelayMs,
   managerQueryOf,
@@ -23,10 +26,17 @@ import {
   mergeDropped,
   mergeManagerNames,
   nextManagerLock,
+  normalizeManualEmail,
+  pickedCounts,
   reconcilePicked,
   step1ListPhase,
+  targetForChannel,
   uniqueManagers,
+  validateManualEmail,
+  type BulkChannel,
+  type ChannelTarget,
   type ManagerLock,
+  type ManualEmail,
   type PickedDrop,
 } from "./step1-helpers";
 import {
@@ -67,7 +77,7 @@ import {
 // ────────────────────────────────────────────────────────────── 타입·상수
 
 
-export interface Target {
+export interface Target extends ChannelTarget {
   rowId: string;
   companyName: string;
   representative: string;
@@ -80,6 +90,17 @@ export interface Target {
   refundedAt: string;
   sendable: boolean;
   excludeReason: string;
+  /**
+   * 이메일 판정(2026-09-05 신설) — 서버가 기본정보 「이메일」 → 「53이메일」 → 「신청자이메일」
+   * 순서로 고른 주소와 그 출처, 사업자번호, 보낼 수 있는지와 못 보내는 사유.
+   * ★배포 교체 중 **옛 서버**가 이 칸들을 안 실어 줄 수 있다 — 그때는 전부 빈 값·false 로 읽혀
+   *  「이메일 없음」으로 보인다(없는 주소로 보내는 쪽보다 안전한 방향).
+   */
+  email: string;
+  emailSource: string;
+  bizNo: string;
+  emailSendable: boolean;
+  emailExcludeReason: string;
 }
 
 export interface FailedRow {
@@ -111,6 +132,13 @@ export interface Progress {
 }
 
 export type Step = 1 | 2 | 3;
+
+/** 표 칸에서 이메일을 고치는 중인 한 줄 — 적던 글·오류 문구·「고객 자료에도 저장」 스위치. */
+export interface ManualEmailEdit {
+  draft: string;
+  error: string;
+  persist: boolean;
+}
 
 /**
  * 줄을 가리키는 열쇠.
@@ -176,6 +204,15 @@ export function useBulkState() {
   const [search, setSearch] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
   /**
+   * 어떤 통로로 보낼까 — 기본은 「알림톡·채팅」(지금까지 하던 것과 같다).
+   * 이 값 하나가 표의 이메일 열·숫자 카드·「전체 고르기」·발송 몸통까지 전부 가른다.
+   */
+  const [channel, setChannel] = useState<BulkChannel>("chat");
+  /** 손으로 넣은 이메일 — 열쇠는 줄 열쇠(keyOf). 확인을 누른 것만 들어온다. */
+  const [manualEmails, setManualEmails] = useState<Map<string, ManualEmail>>(new Map());
+  /** 지금 칸에서 고치고 있는 줄 — 여러 줄을 동시에 열어 두고 위에서 아래로 채울 수 있다. */
+  const [manualEdits, setManualEdits] = useState<Map<string, ManualEmailEdit>>(new Map());
+  /**
    * 고른 사람 — **줄 정보를 통째로** 담는다.
    *
    * ★열쇠만 담으면 안 된다. 검색·담당을 바꾸면 그 줄이 목록에서 사라지는데, 발송 명단을
@@ -226,14 +263,9 @@ export function useBulkState() {
       if (rawPricing && typeof rawPricing === "object") setPricing(parsePricing(rawPricing));
       setTargets(t);
       // ★고른 사람은 검색·담당이 바뀌어도 유지한다 — 찾아서 담고, 또 찾아서 담을 수 있어야 한다.
-      //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**(수신거부·중복 번호)은 자동으로 빼고 알린다.
-      //  판정 규칙은 reconcilePicked 가 혼자 안다(시험이 못을 박아 둔다).
-      const fixed = reconcilePicked(pickedRef.current, t.map((x) => ({ key: keyOf(x), row: x })));
-      setPicked(fixed.picked); // 바뀐 게 없으면 같은 Map 이라 React 가 다시 그리지 않는다
-      // ★알림은 쌓는다 — 다음 조회가 「누가 왜 빠졌는지」를 지워 버리면 사람이 영영 못 본다.
-      //  단 다시 보낼 수 있게 된 사람은 지운다(그 줄엔 「체크가 잠깁니다」가 더 이상 사실이 아니다).
-      const sendableNow = t.filter((x) => x.sendable).map(keyOf);
-      setDroppedPicked((prev) => mergeDropped(prev, fixed.dropped, sendableNow));
+      //  단 **이번 목록에 있는데 보낼 수 없게 바뀐 줄**은 자동으로 빼고 알린다 —
+      //  그 손질은 아래 한 곳(명단 손질 효과)이 맡는다. 여기서 한 번 더 하면 **채널을 모르는 채로**
+      //  걸러서, 이메일로 보내는 중에 번호 없는 줄이 조용히 빠진다.
       setLoadedOnce(true);
     } catch (e) {
       if (seq !== fetchSeq.current) return;
@@ -279,7 +311,23 @@ export function useBulkState() {
   }, [loadListNow, managerFilter, search]);
 
   // 담당 필터는 서버 조회 파라미터 — 화면에서 한 번 더 거르지 않는다.
-  const visibleTargets = targets;
+  /** 서버가 준 줄에 **직접 입력한 주소만** 얹은 것 — 채널은 아직 안 녹였다(숫자 카드가 원래 값을 센다). */
+  const mergedTargets = useMemo(
+    () => targets.map((t) => applyManualEmail(t, manualEmails.get(keyOf(t)))),
+    [targets, manualEmails],
+  );
+  /**
+   * 표가 그리는 줄 — 여기서 **채널을 한 번만 녹인다.**
+   * 아래(표·전체 고르기·명단 손질)는 `sendable` 한 칸만 보면 되고 채널을 몰라도 된다.
+   */
+  const visibleTargets = useMemo(
+    () => mergedTargets.map((t) => targetForChannel(t, channel)),
+    [mergedTargets, channel],
+  );
+  /** 숫자 카드 4장 — 앞 셋은 사실이라 채널과 무관, 자동 제외만 채널 기준. */
+  const targetCounts = useMemo(() => emailTargetCounts(mergedTargets, channel), [mergedTargets, channel]);
+  /** 주소가 아예 없는 분 — 경고 상자의 숫자(수신거부·중복은 「없음」이 아니라 여기서 안 센다). */
+  const noEmailCount = useMemo(() => mergedTargets.filter((t) => !t.email).length, [mergedTargets]);
   const sendableTargets = useMemo(() => visibleTargets.filter((t) => t.sendable), [visibleTargets]);
   const excluded = useMemo(() => visibleTargets.filter((t) => !t.sendable), [visibleTargets]);
   const excludeSummary = useMemo(() => {
@@ -302,6 +350,28 @@ export function useBulkState() {
     [picked, visibleKeys],
   );
   const managerOptions = useMemo(() => managerSelectOptions(knownManagers), [knownManagers]);
+  /** 아래 단추 옆 「지금 고른 사람 N명 · 이메일 M명」. */
+  const pickedTotals = useMemo(() => pickedCounts(picked.values(), channel), [picked, channel]);
+
+  /**
+   * 명단 손질 — 목록이 새로 오거나 **채널이 바뀌거나** 직접 입력한 주소가 늘 때마다 돈다.
+   *
+   * ★채널이 바뀌면 「보낼 수 있나」의 기준이 통째로 바뀐다. 알림톡으로 담아 둔 분 중
+   *  이메일 주소가 없는 분은 이메일 발송 명단에 남아 있으면 안 된다(반대도 같다).
+   *  규칙 세 가지(빼기·그대로 두기·갈아 끼우기)는 reconcilePicked 가 혼자 안다.
+   * ★손질 결과가 그대로면 같은 Map·같은 배열이 돌아와 화면은 다시 그려지지 않는다.
+   */
+  useEffect(() => {
+    const fixed = reconcilePicked(
+      pickedRef.current,
+      visibleTargets.map((x) => ({ key: keyOf(x), row: x })),
+    );
+    if (fixed.picked !== pickedRef.current) setPicked(fixed.picked);
+    // ★알림은 쌓는다 — 다음 조회가 「누가 왜 빠졌는지」를 지워 버리면 사람이 영영 못 본다.
+    //  단 다시 보낼 수 있게 된 사람은 지운다(그 줄엔 「체크가 잠깁니다」가 더 이상 사실이 아니다).
+    const sendableNow = visibleTargets.filter((x) => x.sendable).map(keyOf);
+    setDroppedPicked((prev) => mergeDropped(prev, fixed.dropped, sendableNow));
+  }, [visibleTargets]);
 
   const toggleOne = useCallback((row: Target) => {
     setPicked((prev) => {
@@ -322,6 +392,86 @@ export function useBulkState() {
       return next;
     });
   }, [sendableTargets, visibleKeys]);
+
+  // ── 1단계: 이메일 직접 입력 ──────────────────────────────────
+  //
+  // 2026-09-04 사장님 요청 「입력 안 된 경우 직접 넣어 보낼 수 있어야 한다」.
+  // 표의 빈 이메일 칸 → 「직접 입력」 → 그 칸이 입력창이 된다(Enter 확인 · Esc 취소).
+
+  const startManualEmail = useCallback((key: string) => {
+    setManualEdits((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Map(prev);
+      // 「고객 자료에도 저장」은 기본 켬 — 다음 발송부터 손으로 다시 안 넣게(설계서 §4-3-1).
+      next.set(key, { draft: "", error: "", persist: true });
+      return next;
+    });
+  }, []);
+
+  const changeManualEmail = useCallback((key: string, draft: string) => {
+    setManualEdits((prev) => {
+      const cur = prev.get(key);
+      if (!cur) return prev;
+      const next = new Map(prev);
+      // 글자를 고치면 옛 오류 문구는 지운다 — 다 고쳤는데 빨간 줄이 남아 있으면 거짓말이다.
+      next.set(key, { ...cur, draft, error: "" });
+      return next;
+    });
+  }, []);
+
+  const toggleManualPersist = useCallback((key: string) => {
+    setManualEdits((prev) => {
+      const cur = prev.get(key);
+      if (!cur) return prev;
+      const next = new Map(prev);
+      next.set(key, { ...cur, persist: !cur.persist });
+      return next;
+    });
+  }, []);
+
+  const cancelManualEmail = useCallback((key: string) => {
+    setManualEdits((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  /**
+   * 확인 — 세 검사를 통과해야 칸에 들어간다.
+   * ★통과하면 그 줄의 체크를 **켜 준다**(시안). 방금 주소를 넣은 사람을 다시 찾아 체크하게 두면
+   *  여러 줄을 채울 때 반드시 하나를 빠뜨린다.
+   */
+  const saveManualEmail = useCallback((row: Target) => {
+    const key = keyOf(row);
+    const edit = manualEdits.get(key);
+    if (!edit) return;
+    const error = validateManualEmail(edit.draft, mergedTargets, row.rowId);
+    if (error) {
+      setManualEdits((prev) => {
+        const cur = prev.get(key);
+        if (!cur) return prev;
+        const next = new Map(prev);
+        next.set(key, { ...cur, error });
+        return next;
+      });
+      return;
+    }
+    const email = normalizeManualEmail(edit.draft);
+    setManualEmails((prev) => new Map(prev).set(key, { email, persist: edit.persist }));
+    setManualEdits((prev) => {
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+    setPicked((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.set(key, applyManualEmail(row, { email, persist: edit.persist }));
+      return next;
+    });
+  }, [manualEdits, mergedTargets]);
 
   // ── 2단계: 안내문 ────────────────────────────────────────────
   const [originalText, setOriginalText] = useState("");
@@ -622,18 +772,31 @@ export function useBulkState() {
     })) return;
     setSending(true);
     try {
-      const recipients = selected.map((t) => ({
-        // 목록에서 고른 줄은 rowId 만 보낸다 — 화면이 가진 번호는 가려진 것이라 못 쓴다.
-        // 서버가 rowId 로 자료에서 원문을 다시 찾는다(rowId 가 없는 줄은 지금 통로엔 오지 않는다).
-        phone: t.rowId ? "" : t.phone,
-        companyName: t.companyName,
-        representative: t.representative,
-        rowId: t.rowId,
-      }));
+      const recipients = selected.map((t) => {
+        // ★손으로 넣은 주소만 실어 보낸다 — 자료에 있던 주소는 서버가 rowId 로 다시 찾는다.
+        //  화면이 가진 주소를 그대로 보내면 사이에 자료가 바뀌어도 옛 주소로 나간다.
+        const manual = manualEmails.get(keyOf(t));
+        return {
+          // 목록에서 고른 줄은 rowId 만 보낸다 — 화면이 가진 번호는 가려진 것이라 못 쓴다.
+          // 서버가 rowId 로 자료에서 원문을 다시 찾는다(rowId 가 없는 줄은 지금 통로엔 오지 않는다).
+          phone: t.rowId ? "" : t.phone,
+          companyName: t.companyName,
+          representative: t.representative,
+          rowId: t.rowId,
+          ...(manual ? { email: manual.email, emailPersist: manual.persist } : {}),
+        };
+      });
       const res = await fetch("/api/bulk-message/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ originalText, finalText: composedText, recipients, noticeCategory }),
+        body: JSON.stringify({
+          originalText,
+          finalText: composedText,
+          recipients,
+          noticeCategory,
+          // 어떤 통로로 보낼지 — 서버는 이 값이 없으면 옛 화면으로 보고 알림톡·채팅만 보낸다.
+          channels: { chat: channel !== "email", email: emailMode(channel) },
+        }),
       });
       const j = await res.json();
       if (!j.success) throw new Error(j.error);
@@ -666,7 +829,7 @@ export function useBulkState() {
     } finally {
       setSending(false);
     }
-  }, [selected, originalText, composedText, noticeCategory, alertError, loadingTargets, loadError]);
+  }, [selected, originalText, composedText, noticeCategory, channel, manualEmails, alertError, loadingTargets, loadError]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -811,6 +974,18 @@ export function useBulkState() {
     lockedToMe,
     search,
     setSearch,
+    channel,
+    setChannel,
+    targetCounts,
+    noEmailCount,
+    pickedTotals,
+    manualEmails,
+    manualEdits,
+    startManualEmail,
+    changeManualEmail,
+    toggleManualPersist,
+    cancelManualEmail,
+    saveManualEmail,
     visibleTargets,
     picked,
     droppedPicked,

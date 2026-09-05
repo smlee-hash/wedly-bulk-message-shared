@@ -173,6 +173,18 @@ export default function BulkMessageScreen() {
           managerOptions={s.managerOptions}
           search={s.search}
           setSearch={s.setSearch}
+          channel={s.channel}
+          setChannel={s.setChannel}
+          targetCounts={s.targetCounts}
+          noEmailCount={s.noEmailCount}
+          pickedTotals={s.pickedTotals}
+          manualEmails={s.manualEmails}
+          manualEdits={s.manualEdits}
+          startManualEmail={s.startManualEmail}
+          changeManualEmail={s.changeManualEmail}
+          toggleManualPersist={s.toggleManualPersist}
+          cancelManualEmail={s.cancelManualEmail}
+          saveManualEmail={s.saveManualEmail}
           listPhase={s.listPhase}
           loadError={s.loadError}
           retryLoad={s.retryLoad}
@@ -182,7 +194,6 @@ export default function BulkMessageScreen() {
           loadedOnce={s.loadedOnce}
           visibleTargets={s.visibleTargets}
           sendableTargets={s.sendableTargets}
-          excluded={s.excluded}
           excludeSummary={s.excludeSummary}
           allChecked={s.allChecked}
           toggleAll={s.toggleAll}

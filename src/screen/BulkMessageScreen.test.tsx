@@ -121,3 +121,71 @@ describe("3단계 예상 비용 칩 — 두 줄로 접혀도 테두리를 뚫지
     });
   }
 });
+
+describe("1단계 채널 구간 단추 — 첫 그림은 「알림톡·채팅」(지금과 같음)", () => {
+  it("통로 3개가 구간 단추로 있고 알림톡·채팅이 눌려 있다", () => {
+    expect(html).toContain('aria-label="어떤 통로로 보낼까요"');
+    for (const label of ["알림톡·채팅", "이메일", "둘 다"]) {
+      expect(html, `구간 단추 「${label}」`).toContain(label);
+    }
+    // 눌린 것 하나 · 안 눌린 것 둘 — 읽어 주는 도구가 고른 통로를 말할 수 있어야 한다.
+    expect((html.match(/aria-pressed="true"/g) ?? []).length).toBe(1);
+    expect((html.match(/aria-pressed="false"/g) ?? []).length).toBe(2);
+  });
+
+  it("알림톡·채팅일 때는 이메일 열·이메일 없음 경고를 그리지 않는다", () => {
+    // 이메일을 안 쓰는 담당자에게 빈 열과 경고를 내밀지 않는다.
+    expect(html).not.toContain(">이메일</th>");
+    expect(html).not.toContain("이 발송에서 자동 제외됩니다");
+    expect(html).toContain("상호명 · 대표자명 · 연락처 검색");
+  });
+
+  it("이메일 열·카드·경고·검색 안내는 채널 하나(emailShown)로만 켜고 끈다", () => {
+    // 자리마다 따로 판단하면 한 곳이 빠져 열은 없는데 값만 남는 어긋남이 생긴다.
+    expect(step1Source).toContain("const emailShown = emailMode(channel);");
+    expect(step1Source).toContain("{emailShown && (");
+    expect(step1Source).toContain("colSpan={emailShown ? 9 : 8}");
+  });
+
+  it("숫자 카드는 네 장이고 알림톡·채팅일 때 이메일 칸은 「—」다", () => {
+    expect(step1Source).toContain('label="알림톡 가능"');
+    expect(step1Source).toContain('label="이메일 가능"');
+    expect(step1Source).toContain('value={emailShown ? `${won(targetCounts.emailOk)}명` : "—"}');
+    // 불러오는 동안의 자리지킴도 네 장이어야 칸이 안 흔들린다
+    expect((step1Source.match(/<LoadingStat \/>/g) ?? []).length).toBe(4);
+  });
+});
+
+describe("1단계 이메일 직접 입력", () => {
+  it("Enter 로 확인하고 Esc 로 취소한다", () => {
+    expect(step1Source).toContain('if (e.key === "Enter")');
+    expect(step1Source).toContain('} else if (e.key === "Escape") {');
+    expect(step1Source).toContain("onSave();");
+    expect(step1Source).toContain("onCancel();");
+  });
+
+  it("「고객 자료에도 저장」은 기본으로 켜져 있다", () => {
+    expect(step1Source).toContain('label="고객 자료에도 저장"');
+    // 기본값은 훅이 정한다 — 화면이 따로 정하면 두 곳이 어긋난다
+    expect(hookSource).toContain('next.set(key, { draft: "", error: "", persist: true });');
+  });
+
+  it("오류는 칸 아래 한 줄로 뜨고 입력칸이 그것을 가리킨다", () => {
+    // hover 로만 보이는 안내 금지 — 늘 보이는 줄로 그린다.
+    expect(step1Source).toContain('role="alert"');
+    expect(step1Source).toContain("aria-describedby={edit.error ? errorId : undefined}");
+    expect(step1Source).toContain('aria-invalid={edit.error ? true : undefined}');
+  });
+
+  it("발송 몸통에 통로와 직접 입력 주소를 함께 싣는다", () => {
+    expect(hookSource).toContain("channels: { chat: channel !== \"email\", email: emailMode(channel) },");
+    expect(hookSource).toContain("...(manual ? { email: manual.email, emailPersist: manual.persist } : {}),");
+  });
+
+  it("채널이 바뀌면 고른 명단을 그 기준으로 다시 거른다", () => {
+    // 채널마다 「보낼 수 있나」가 달라진다 — 손질을 한 곳에서만 한다(조회·채널 바뀜 둘 다).
+    expect(hookSource).toContain("const fixed = reconcilePicked(");
+    expect(hookSource).toContain("}, [visibleTargets]);");
+    expect(hookSource).toContain("targetForChannel(t, channel)");
+  });
+});

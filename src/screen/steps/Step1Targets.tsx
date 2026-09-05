@@ -4,29 +4,133 @@
 // JSX 는 BulkMessageScreen 에서 **글자 그대로** 옮겼다(문구·클래스·들여쓰기까지 그대로).
 // 상태·핸들러는 useBulkState 가 들고 있고, 이 파일은 받아서 그리기만 한다.
 
-import { AlertTriangle, RotateCcw, Search, UserCheck, Users, X } from "lucide-react";
-import { Checkbox, StatCard, StatusBox } from "@wedly/ui-shared/ui";
+import { AlertTriangle, Mail, MessageSquare, RotateCcw, Search, Users, X } from "lucide-react";
+import { Checkbox, SegmentedControl, StatCard, StatusBox } from "@wedly/ui-shared/ui";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import CustomSelect from "../../ui/CustomSelect";
+import { Input } from "../../ui/Input";
 import { cn } from "../../ui/cn";
 import { MAX_RECIPIENTS } from "../limits";
 import {
+  CHANNEL_OPTIONS,
   LOADING_TARGETS_HINT,
   MANAGER_LOCKED_LABEL,
   MANAGER_UNKNOWN_LABEL,
   SEARCH_PLACEHOLDER,
+  channelNote,
   droppedSummary,
+  emailMode,
+  excludeChipVariant,
   isRefunded,
   managerControl,
   statusBadgesOf,
+  type BulkChannel,
+  type EmailTargetCounts,
   type ManagerLock,
+  type ManualEmail,
   type PickedDrop,
   type Step1ListPhase,
 } from "../step1-helpers";
 import { LoadingStat, SectionHead, displayPhone, won } from "../bulk-ui";
-import { keyOf, type Step, type Target } from "../useBulkState";
+import { keyOf, type ManualEmailEdit, type Step, type Target } from "../useBulkState";
+
+/**
+ * 표의 이메일 칸 하나 — 세 가지 모습.
+ *  ① 고치는 중: 입력창 + 확인·취소 + 「고객 자료에도 저장」 + (오류면) 빨간 한 줄
+ *  ② 주소가 있음: 주소 + (손으로 넣은 것이면) 「직접 입력」 딱지
+ *  ③ 주소가 없음: — 과 「직접 입력」 단추
+ */
+function EmailCell({
+  row,
+  edit,
+  manual,
+  onStart,
+  onChange,
+  onTogglePersist,
+  onCancel,
+  onSave,
+}: {
+  row: Target;
+  edit?: ManualEmailEdit;
+  manual?: ManualEmail;
+  onStart: () => void;
+  onChange: (value: string) => void;
+  onTogglePersist: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const who = row.companyName || row.representative || "이 회사";
+  if (edit) {
+    const errorId = `bm-email-err-${keyOf(row)}`;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={edit.draft}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter 로 확인, Esc 로 취소 — 여러 줄을 이어서 채울 때 손이 자판을 안 떠나게.
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSave();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+          type="email"
+          inputMode="email"
+          autoComplete="off"
+          autoFocus
+          placeholder="ceo@company.co.kr"
+          aria-label={`${who} 이메일 주소`}
+          aria-invalid={edit.error ? true : undefined}
+          aria-describedby={edit.error ? errorId : undefined}
+          className={cn("h-8 w-[190px]", edit.error && "border-wedly-red")}
+        />
+        <Button type="button" size="xs" onClick={onSave}>
+          확인
+        </Button>
+        <Button type="button" size="xs" variant="secondary" onClick={onCancel}>
+          취소
+        </Button>
+        <Checkbox
+          checked={edit.persist}
+          onChange={onTogglePersist}
+          label="고객 자료에도 저장"
+          className="[&>span]:text-wedly-hint [&>span]:text-wedly-t2"
+        />
+        {edit.error && (
+          <p
+            id={errorId}
+            role="alert"
+            className="basis-full text-wedly-hint font-semibold text-wedly-red break-keep"
+          >
+            {edit.error}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (row.email) {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        {/* 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로 접는다. */}
+        <span className="min-w-0 break-all">{row.email}</span>
+        {manual && <Badge variant="blue">직접 입력 · {manual.persist ? "자료 저장" : "이번만"}</Badge>}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span className="text-wedly-t2">—</span>
+      <Button type="button" size="xs" variant="secondary" onClick={onStart}>
+        직접 입력
+      </Button>
+    </span>
+  );
+}
 
 export interface Step1TargetsProps {
   lockedToMe: ManagerLock;
@@ -35,6 +139,18 @@ export interface Step1TargetsProps {
   managerOptions: Array<{ value: string; label: string }>;
   search: string;
   setSearch: (value: string) => void;
+  channel: BulkChannel;
+  setChannel: (value: BulkChannel) => void;
+  targetCounts: EmailTargetCounts;
+  noEmailCount: number;
+  pickedTotals: { total: number; email: number };
+  manualEmails: Map<string, ManualEmail>;
+  manualEdits: Map<string, ManualEmailEdit>;
+  startManualEmail: (key: string) => void;
+  changeManualEmail: (key: string, draft: string) => void;
+  toggleManualPersist: (key: string) => void;
+  cancelManualEmail: (key: string) => void;
+  saveManualEmail: (row: Target) => void;
   listPhase: Step1ListPhase;
   loadError: string;
   retryLoad: () => void;
@@ -44,7 +160,6 @@ export interface Step1TargetsProps {
   loadedOnce: boolean;
   visibleTargets: Target[];
   sendableTargets: Target[];
-  excluded: Target[];
   excludeSummary: string;
   allChecked: boolean;
   toggleAll: () => void;
@@ -63,6 +178,18 @@ export function Step1Targets({
   managerOptions,
   search,
   setSearch,
+  channel,
+  setChannel,
+  targetCounts,
+  noEmailCount,
+  pickedTotals,
+  manualEmails,
+  manualEdits,
+  startManualEmail,
+  changeManualEmail,
+  toggleManualPersist,
+  cancelManualEmail,
+  saveManualEmail,
   listPhase,
   loadError,
   retryLoad,
@@ -72,7 +199,6 @@ export function Step1Targets({
   loadedOnce,
   visibleTargets,
   sendableTargets,
-  excluded,
   excludeSummary,
   allChecked,
   toggleAll,
@@ -83,6 +209,7 @@ export function Step1Targets({
   selectedCount,
   hiddenPicked,
 }: Step1TargetsProps) {
+  const emailShown = emailMode(channel);
   return (
         <Card>
           <SectionHead
@@ -92,6 +219,23 @@ export function Step1Targets({
             title="받을 분 고르기"
             desc="계약일이 적힌 고객이 자동으로 올라와요. 보낼 분을 체크해 주세요"
           />
+
+          {/* ★통로를 맨 위에서 고른다 — 이 하나가 표의 이메일 열·숫자 카드·「전체 고르기」까지 다 가른다. */}
+          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div role="group" aria-label="어떤 통로로 보낼까요" className="flex min-w-0 flex-col gap-1">
+              <span className="text-wedly-label font-semibold text-wedly-muted">어떤 통로로 보낼까요</span>
+              <SegmentedControl
+                options={CHANNEL_OPTIONS}
+                value={channel}
+                onChange={(v) => setChannel(v as BulkChannel)}
+                // 시안의 구간 단추 모양(회색 트랙 + 테두리 + 둥근 네모)을 토큰으로.
+                className="rounded-xl border border-wedly-bd bg-wedly-bg-gray p-[3px] [&>button]:rounded-[9px]"
+              />
+            </div>
+            <p className="min-w-0 max-w-[460px] flex-1 basis-[260px] self-end pb-1 text-wedly-hint text-wedly-muted break-keep">
+              {channelNote(channel)}
+            </p>
+          </div>
 
           <div className="mb-4 flex flex-wrap items-end gap-3">
             {/* ★화면의 잠금은 거들 뿐이다 — 실제 방어는 서버(lockedToMe 를 내려주는 쪽)에 있다.
@@ -126,7 +270,7 @@ export function Step1Targets({
 
             <div className="flex min-w-0 flex-1 basis-[240px] flex-col gap-1">
               <label htmlFor="bm-search" className="text-wedly-label font-semibold text-wedly-muted">
-                상호명 · 대표자명 · 연락처 검색
+                {emailShown ? "상호명 · 대표자명 · 연락처 · 이메일 검색" : "상호명 · 대표자명 · 연락처 검색"}
               </label>
               <div className="flex h-10 items-center gap-2 rounded-full border border-wedly-bd bg-white px-4 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-wedly-accent">
                 <Search className="h-4 w-4 shrink-0 text-wedly-muted" aria-hidden />
@@ -165,6 +309,7 @@ export function Step1Targets({
           <p className="-mt-2 mb-4 text-wedly-hint text-wedly-muted break-keep">
             상세창 계약정보에 <b className="font-semibold text-wedly-t1">계약일이 적힌 고객만</b> 올라옵니다.
             회사명·대표자명은 일부만 쳐도 찾아지고, 연락처는 뒷자리 네 개나 전체 번호 모두 됩니다.
+            {emailShown && " 이메일은 기본정보 「이메일」 → 경정청구 「53이메일」 → 「신청자이메일」 순서로 찾습니다."}
           </p>
 
           {listPhase === "error" && (
@@ -197,9 +342,10 @@ export function Step1Targets({
             </StatusBox>
           )}
 
-          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-busy={loadingTargets}>
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-busy={loadingTargets}>
             {loadingTargets ? (
               <>
+                <LoadingStat />
                 <LoadingStat />
                 <LoadingStat />
                 <LoadingStat />
@@ -209,17 +355,44 @@ export function Step1Targets({
                 <StatCard
                   icon={Users}
                   label={search.trim() ? "검색에 걸린 고객" : "계약한 고객"}
-                  value={`${won(visibleTargets.length)}명`}
+                  value={`${won(targetCounts.contract)}명`}
                 />
-                <StatCard icon={UserCheck} label="발송 가능" value={`${won(sendableTargets.length)}명`} />
+                <StatCard icon={MessageSquare} label="알림톡 가능" value={`${won(targetCounts.chatOk)}명`} />
+                {/* ★알림톡·채팅만 보낼 때는 숫자 대신 「—」 — 안 쓰는 통로의 인원을 세어 두면 오해한다. */}
+                <StatCard
+                  icon={Mail}
+                  label="이메일 가능"
+                  value={emailShown ? `${won(targetCounts.emailOk)}명` : "—"}
+                />
                 <StatCard
                   icon={AlertTriangle}
                   label={excludeSummary ? `자동 제외 · ${excludeSummary}` : "자동 제외"}
-                  value={`${won(excluded.length)}명`}
+                  value={`${won(targetCounts.excluded)}명`}
                 />
               </>
             )}
           </div>
+
+          {/* ★이메일이 없는 분을 숨기지 않는다 — 표에 남겨 두고 칸에서 주소를 넣게 한다(설계서 §4-3-1). */}
+          {emailShown && !loadingTargets && noEmailCount > 0 && (
+            <StatusBox
+              tone="warning"
+              title={`이메일이 없는 분 ${won(noEmailCount)}명은 이 발송에서 자동 제외됩니다`}
+              className="mb-4"
+              actions={
+                <>
+                  <Badge variant="yellow">준비 중</Badge>
+                  <Button type="button" variant="secondary" size="sm" disabled>
+                    주소 요청 안내 보내기
+                  </Button>
+                </>
+              }
+            >
+              표의 「이메일 없음」 줄에서 <b className="font-semibold text-wedly-t1">직접 입력</b>을 누르면 주소를
+              넣어 바로 보낼 수 있어요(기본으로 고객 자료에도 저장, 누가 언제 넣었는지 기록). 여러 명이면
+              알림톡·채팅으로 「이메일 주소를 알려 주세요」 안내를 먼저 보내는 단추를 준비하고 있어요.
+            </StatusBox>
+          )}
 
           <div className="max-h-[440px] overflow-auto rounded-2xl border border-wedly-bd" aria-busy={loadingTargets}>
             <table className="w-full min-w-[720px] border-collapse">
@@ -237,6 +410,9 @@ export function Step1Targets({
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">회사명</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">대표명</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">연락처</th>
+                  {emailShown && (
+                    <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">이메일</th>
+                  )}
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">계약일</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">진행상태</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">담당</th>
@@ -246,13 +422,13 @@ export function Step1Targets({
               <tbody>
                 {loadingTargets ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
+                    <td colSpan={emailShown ? 9 : 8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
                       불러오는 중…
                     </td>
                   </tr>
                 ) : visibleTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
+                    <td colSpan={emailShown ? 9 : 8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
                       {search.trim()
                         ? "검색어와 맞는 고객이 없어요. 다른 말로 찾아 보세요."
                         : loadedOnce
@@ -293,6 +469,20 @@ export function Step1Targets({
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {displayPhone(t)}
                       </td>
+                      {emailShown && (
+                        <td className={cn("min-w-0 px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                          <EmailCell
+                            row={t}
+                            edit={manualEdits.get(keyOf(t))}
+                            manual={manualEmails.get(keyOf(t))}
+                            onStart={() => startManualEmail(keyOf(t))}
+                            onChange={(v) => changeManualEmail(keyOf(t), v)}
+                            onTogglePersist={() => toggleManualPersist(keyOf(t))}
+                            onCancel={() => cancelManualEmail(keyOf(t))}
+                            onSave={() => saveManualEmail(t)}
+                          />
+                        </td>
+                      )}
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.contractDate || "—"}
                       </td>
@@ -315,12 +505,12 @@ export function Step1Targets({
                         {t.manager || "—"}
                       </td>
                       <td className="px-3 py-2">
+                        {/* ★사유 글자와 칩 색이 같은 값에서 나온다(excludeChipVariant) — 색이 거짓말을 하지 않게.
+                            줄의 sendable·excludeReason 은 고른 채널 기준으로 이미 갈아 끼운 값이다. */}
                         {t.sendable ? (
-                          <Badge variant="blue">가능</Badge>
-                        ) : t.excludeReason === "번호 없음" ? (
-                          <Badge variant="yellow">번호 없음</Badge>
+                          <Badge variant="green">발송 가능</Badge>
                         ) : (
-                          <Badge variant="red">{t.excludeReason || "제외"}</Badge>
+                          <Badge variant={excludeChipVariant(t.excludeReason)}>{t.excludeReason || "제외"}</Badge>
                         )}
                       </td>
                     </tr>
@@ -339,7 +529,13 @@ export function Step1Targets({
               <span className="text-wedly-hint text-wedly-muted break-keep">{LOADING_TARGETS_HINT}</span>
             ) : (
               <span className="text-wedly-hint text-wedly-muted tabular-nums break-keep">
-                지금 고른 사람 <b className="font-semibold text-wedly-t1">{won(selectedCount)}명</b>
+                지금 고른 사람 <b className="font-semibold text-wedly-t1">{won(pickedTotals.total)}명</b>
+                {emailShown && (
+                  <>
+                    {" · 이메일 "}
+                    <b className="font-semibold text-wedly-t1">{won(pickedTotals.email)}명</b>
+                  </>
+                )}
                 {hiddenPicked > 0 && `  (그중 ${won(hiddenPicked)}명은 지금 화면에 안 보여요)`}
                 {selectedCount > MAX_RECIPIENTS && ` — 한 번에 ${MAX_RECIPIENTS}명까지만 보낼 수 있어요`}
               </span>
