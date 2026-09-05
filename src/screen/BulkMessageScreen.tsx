@@ -334,6 +334,23 @@ export default function BulkMessageScreen() {
           setConfirmOpen={s.setConfirmOpen}
           sending={s.sending}
           send={s.send}
+          myEmail={s.myEmail}
+          channel={s.channel}
+          pickedTotals={s.pickedTotals}
+          emailSubject={s.emailSubject}
+          emailAttachments={s.emailAttachments}
+          emailChecks={s.emailChecks}
+          emailChecksFailed={s.emailChecksFailed}
+          sendWarnings={s.sendWarnings}
+          sendProgress={s.sendProgress}
+          remaining={s.remaining}
+          stopAllowed={s.stopAllowed}
+          stopOpen={s.stopOpen}
+          setStopOpen={s.setStopOpen}
+          stopping={s.stopping}
+          stopJob={s.stopJob}
+          sendStartedAt={s.sendStartedAt}
+          sendFinishedAt={s.sendFinishedAt}
         />
       )}
       </div>

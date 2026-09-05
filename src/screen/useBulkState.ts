@@ -79,12 +79,18 @@ import {
   NOTICE_CATEGORIES,
   alimtalkFailedCountOf,
   canConfirmSend,
+  canStopSend,
+  emailChecklist,
+  emailChecklistFailedCount,
   estimateCost,
   parsePricing,
+  progressOf,
   refundedNotice,
   restoredJobFromStore,
+  sendRunning,
   skippedNotice,
   type BulkPricing,
+  type EmailChecklistItem,
   type SkippedNotice,
 } from "./step3-helpers";
 
@@ -124,7 +130,7 @@ export interface FailedRow {
   error: string;
 }
 
-/** 발송 결과 한 줄. 연락처는 서버가 가려서 준다. */
+/** 발송 결과 한 줄. 연락처·이메일 주소는 서버가 가려서 준다. */
 export interface RecipientRow extends FailedRow {
   status: string;
   /** "sent" | "failed" | "" — 빈 값은 「모름」이다(성공으로 위장하지 않는다). */
@@ -132,6 +138,19 @@ export interface RecipientRow extends FailedRow {
   /** 알림톡만 실패했을 때의 사유. 옛 응답에는 없다. */
   alimtalkError?: string;
   viewedAt: string | null;
+  /**
+   * 이메일 칸(2026-09-05 신설). 주소는 가려서 온다(`ho***@wedly.kr`).
+   * ★채팅만 보내던 옛 응답에는 이 칸이 통째로 없다 — 전부 물음표(?)다.
+   */
+  email?: string;
+  emailSource?: string;
+  emailStatus?: string;
+  emailSkipReason?: string;
+  emailError?: string;
+  emailSentAt?: string | null;
+  emailDeliveredAt?: string | null;
+  emailBouncedAt?: string | null;
+  emailViewedAt?: string | null;
 }
 
 export interface Progress {
@@ -143,6 +162,20 @@ export interface Progress {
   stalled: boolean;
   failedRows: FailedRow[];
   recipients: RecipientRow[];
+  /** 이 작업이 실제로 쓴 통로 — 새로고침 뒤에도 화면 고르개가 아니라 이 값이 정본이다. */
+  channelChat?: boolean;
+  channelEmail?: boolean;
+  emailSubject?: string;
+  emailStatus?: string;
+  emailSent?: number;
+  emailFailed?: number;
+  stopRequested?: boolean;
+  /**
+   * 통로별 인원 — **발송 응답에만** 있다(진행 조회는 안 준다).
+   * 그래서 조회 결과를 덮어쓸 때 이 두 칸은 남겨 둔다. 되살린 화면에는 처음부터 없다.
+   */
+  chatTotal?: number | null;
+  emailTotal?: number | null;
 }
 
 export type Step = 1 | 2 | 3;
@@ -191,13 +224,19 @@ export function useBulkState() {
   }, []);
   useEffect(() => () => { if (errorTimer.current) clearTimeout(errorTimer.current); }, []);
 
-  // 보낸 사람 이름(답장 배정 안내에 쓴다)
+  // 보낸 사람 이름(답장 배정 안내에 쓴다)과 업무 메일(이메일 발송의 회신 주소가 된다)
   const [myName, setMyName] = useState("");
+  const [myEmail, setMyEmail] = useState("");
   useEffect(() => {
     let alive = true;
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (alive && j?.name) setMyName(String(j.name)); })
+      .then((j) => {
+        if (!alive || !j) return;
+        if (j.name) setMyName(String(j.name));
+        // ★회신 주소를 화면이 지어내지 않는다 — 못 얻으면 3단계가 「담당자 메일로 옵니다」로만 적는다.
+        if (j.email) setMyEmail(String(j.email));
+      })
       .catch(() => { /* 이름을 못 얻어도 화면은 돈다 */ });
     return () => { alive = false; };
   }, []);
@@ -1036,6 +1075,25 @@ export function useBulkState() {
   /** 진행 조회가 연달아 실패했을 때의 안내 — 「보내는 중」이 굳어 보이지 않게. */
   const [pollError, setPollError] = useState("");
   /**
+   * 발송은 됐지만 알려 둘 일(직접 입력 주소를 고객 자료에 못 적었다 등).
+   * ★서버가 `warnings` 로 준다. 조용히 버리면 담당자는 저장된 줄 안다.
+   */
+  const [sendWarnings, setSendWarnings] = useState<string[]>([]);
+  /**
+   * 「발송 중단」 — 확인 모달(브라우저 confirm 금지)과 누르는 동안의 잠금.
+   */
+  const [stopOpen, setStopOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  /**
+   * 발송 현황 머리에 적는 시각.
+   *
+   * ★진행 조회 응답에는 시각 칸이 없다(서버 `getJob` 이 status·총계만 준다) —
+   *  그래서 **이 화면에서 보낸 발송에 한해** 보낸 순간·끝난 것을 본 순간을 적어 둔다.
+   *  새로고침으로 되살린 화면에는 값이 없고, 그때는 시각을 아예 안 그린다(지어내지 않는다).
+   */
+  const [sendStartedAt, setSendStartedAt] = useState<Date | null>(null);
+  const [sendFinishedAt, setSendFinishedAt] = useState<Date | null>(null);
+  /**
    * 보관한 작업 번호로 되살린 화면인가.
    * ★대상·안내문은 복원 대상이 아니다 — 3단계 확인 표를 그대로 그리면 「받는 사람 0명 · 약 0원」이 뜬다.
    *  되살린 화면에서는 진행 표만 그린다.
@@ -1116,7 +1174,13 @@ export function useBulkState() {
       setDroppedPicked([]); // 발송이 시작되면 1단계 알림은 제 몫을 다했다
       setBlockedCount(Number(j.data.blockedCount ?? 0));
       setSendOutOfScopeCount(Number(j.data.outOfScopeCount ?? 0));
+      // 발송은 됐지만 알려 둘 일(직접 입력 주소 저장 실패 등) — 조용히 버리지 않는다.
+      setSendWarnings(Array.isArray(j.data?.warnings) ? j.data.warnings.map((w: unknown) => String(w)) : []);
       setPollError("");
+      setSendStartedAt(new Date());
+      setSendFinishedAt(null);
+      const chatOn = channel !== "email";
+      const emailOn = emailMode(channel);
       setProgress({
         status: "running",
         total: j.data.total,
@@ -1126,6 +1190,16 @@ export function useBulkState() {
         stalled: false,
         failedRows: [],
         recipients: [],
+        // ★통로별 인원은 **이 응답에만** 있다 — 진행 조회는 안 준다. 아래 폴링이 덮어쓸 때 남긴다.
+        chatTotal: j.data?.chatTotal == null ? null : Number(j.data.chatTotal),
+        emailTotal: j.data?.emailTotal == null ? null : Number(j.data.emailTotal),
+        channelChat: chatOn,
+        channelEmail: emailOn,
+        emailStatus: emailOn ? "running" : "",
+        emailSent: 0,
+        emailFailed: 0,
+        stopRequested: false,
+        emailSubject: emailOn ? emailComposedBody?.subject ?? "" : "",
       });
     } catch (e) {
       // 모달을 먼저 닫아야 화면 위 오류 상자가 덮개에 가리지 않는다.
@@ -1159,8 +1233,14 @@ export function useBulkState() {
         if (j.success) {
           misses = 0;
           setPollError("");
-          setProgress(j.data as Progress);
-          if (j.data.status !== "running" && timer) clearInterval(timer);
+          // ★통로별 인원(chatTotal·emailTotal)은 진행 조회 응답에 없다 — 덮어쓰면 막대가 통째로 틀어진다.
+          setProgress((prev) => ({
+            ...(j.data as Progress),
+            chatTotal: prev?.chatTotal ?? null,
+            emailTotal: prev?.emailTotal ?? null,
+          }));
+          // ★이메일만 보내는 작업은 status 가 처음부터 "done" 이다 — 두 칸을 함께 봐야 멈춘다.
+          if (!sendRunning(j.data) && timer) clearInterval(timer);
         } else if (res.status === 404) {
           // 남의 작업·없는 작업이면 적어 둔 번호를 지우고 **1단계로 돌려보낸다** —
           // jobId 를 남기면 1·2단계가 잠긴 채(canGo) 화면이 갇힌다.
@@ -1190,6 +1270,40 @@ export function useBulkState() {
     };
   }, [jobId, pollKey, alertError]);
 
+  /**
+   * 끝난 것을 본 순간을 종료 시각으로 적는다.
+   * ★서버가 끝난 시각을 안 준다(진행 조회에 시각 칸이 없다) — 그래서 **이 화면에서 보낸** 발송에만
+   *  적고(시작 시각이 있는 경우), 되살린 화면에는 아무 시각도 안 그린다.
+   */
+  useEffect(() => {
+    if (!sendStartedAt || sendFinishedAt) return;
+    if (!progress || sendRunning(progress)) return;
+    setSendFinishedAt(new Date());
+  }, [progress, sendStartedAt, sendFinishedAt]);
+
+  /**
+   * 「발송 중단」 — 아직 안 나간 이메일을 그 자리에서 멈춘다(이미 나간 메일은 되돌릴 수 없다).
+   * ★확인은 위들리 Modal 로 받는다(브라우저 confirm 금지).
+   */
+  const stopJob = useCallback(async () => {
+    if (!jobId) return;
+    setStopping(true);
+    try {
+      const res = await fetch(`/api/bulk-message/jobs/${jobId}/stop`, { method: "POST" });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.error);
+      setStopOpen(false);
+      // 다음 조회를 기다리지 않고 단추부터 닫는다 — 두 번 눌러 두 번 부르는 일을 막는다.
+      setProgress((p) => (p ? { ...p, stopRequested: true } : p));
+      setPollKey((k) => k + 1);
+    } catch (e) {
+      setStopOpen(false);
+      alertError(`발송을 중단하지 못했어요: ${String((e as Error).message)}`);
+    } finally {
+      setStopping(false);
+    }
+  }, [jobId, alertError]);
+
   const pending = progress ? Math.max(0, progress.total - progress.sent - progress.failed) : 0;
   /** 채널톡에는 안내가 심겼는데 **알림톡만** 못 나간 사람 수. 요약의 「보냄」에 섞여 있어 따로 센다. */
   const alimtalkFailedCount = alimtalkFailedCountOf(progress?.recipients ?? []);
@@ -1214,8 +1328,28 @@ export function useBulkState() {
     selectedCount,
     loadError,
   });
-  /** 발송 단추가 눌리는 조건 — 대상·상한에 더해 **안내 내용을 골랐는지**까지 본다. */
-  const sendReady = canConfirmSend({ targetsOk, tooMany, noticeCategory });
+  /**
+   * 발송 전 점검 아홉 줄(이메일). 채널이 「알림톡·채팅」이면 빈 배열이라 3단계가 카드를 안 그린다.
+   * ★2단계 잠금(`emailStepReady`)과 같은 재료를 본다 — 두 곳이 다른 기준을 쓰면
+   *  2단계는 통과인데 3단계에서만 막히는 일이 생긴다.
+   */
+  const emailChecks: EmailChecklistItem[] = useMemo(
+    () =>
+      emailChecklist({
+        channel,
+        subject: emailSubject,
+        preheader: emailPreheader,
+        fillMarkers: emailFillMarkers,
+        fillValues: emailFilled,
+        factLock,
+        adSentences,
+        attachments: emailAttachments,
+      }),
+    [channel, emailSubject, emailPreheader, emailFillMarkers, emailFilled, factLock, adSentences, emailAttachments],
+  );
+  const emailChecksFailed = emailChecklistFailedCount(emailChecks);
+  /** 발송 단추가 눌리는 조건 — 대상·상한에 더해 통로별 검문(안내 내용 / 점검 아홉 줄)까지 본다. */
+  const sendReady = canConfirmSend({ targetsOk, tooMany, noticeCategory, channel, emailChecks });
   /**
    * 고른 명단에 섞인 환불 고객 — 판정은 환불일 하나뿐(진행상태 글자는 안 본다).
    * ★표 안의 줄별 판정(`refunded`)과 이름이 겹치지 않게 둔다 — 겹치면 안쪽이 바깥을 가린다.
@@ -1282,12 +1416,20 @@ export function useBulkState() {
   const noticeCategoryPicked = noticeCategory.trim();
   const testNoticeCategoryLabel = noticeCategoryPicked || DEFAULT_NOTICE_CATEGORY_LABEL;
 
+  /** 진행 막대가 읽는 값 — 통로마다 세는 칸이 다르다(chat: sent+failed / email: emailSent+emailFailed). */
+  const sendProgress = progressOf(progress, channel);
+  /** 아직 안 나간 사람 — 통로 기준으로 센다(이메일만 보낼 때 채팅 숫자로 세면 늘 전원이 남는다). */
+  const remaining = Math.max(0, sendProgress.total - sendProgress.done);
+  const stopAllowed = canStopSend(progress);
+  const sending2 = sendRunning(progress);
+
   return {
     errorMsg,
     step,
     canGo,
     goStep,
     myName,
+    myEmail,
     managerFilter,
     onManagerChange,
     managerOptions,
@@ -1421,5 +1563,19 @@ export function useBulkState() {
     resume,
     sendReady,
     refundedInSelection,
+    // 3단계 이메일
+    emailChecks,
+    emailChecksFailed,
+    sendWarnings,
+    sendProgress,
+    remaining,
+    sendRunning: sending2,
+    stopAllowed,
+    stopOpen,
+    setStopOpen,
+    stopping,
+    stopJob,
+    sendStartedAt,
+    sendFinishedAt,
   };
 }

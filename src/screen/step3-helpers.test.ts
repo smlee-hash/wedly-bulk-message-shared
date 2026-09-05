@@ -4,17 +4,28 @@ import { describe, expect, it } from "vitest";
 import {
   ALIMTALK_REASON_MISSING,
   DEFAULT_PRICING,
+  EMAIL_REASON_MISSING,
   NOTICE_CATEGORIES,
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
+  canStopSend,
+  emailChecklist,
+  emailChecklistFailedCount,
+  emailSignalOf,
   estimateCost,
   failureReasonOf,
   parsePricing,
   progressHeadline,
+  progressOf,
+  progressPercent,
   refundedNotice,
   restoredJobFromStore,
+  sendHeadline,
+  sendRunning,
   skippedNotice,
+  subjectRuleOk,
+  type EmailChecklistState,
 } from "./step3-helpers";
 import { droppedSummary } from "./step1-helpers";
 
@@ -345,5 +356,335 @@ describe("estimateCost", () => {
     // 시험 발송은 알림톡 기준 문구 + 안내 내용을 함께 보낸다
     expect(hookSrc).toContain("phone: testPhone, noticeCategory");
     expect(hookSrc).toContain("보냈어요. 카카오톡 알림톡을 확인해 주세요.");
+  });
+});
+
+/* ══════════════════ 이메일 3단계 (2026-09-05) ══════════════════ */
+
+function checkState(over: Partial<EmailChecklistState> = {}): EmailChecklistState {
+  return {
+    channel: "email",
+    subject: "장려금 2차 서류 제출 안내",
+    preheader: "4대보험 완납증명서·8월 임금대장 2종",
+    fillMarkers: [],
+    fillValues: {},
+    factLock: { missing: [], added: [], ok: true },
+    adSentences: [],
+    attachments: [],
+    ...over,
+  };
+}
+const labels = (over: Partial<EmailChecklistState> = {}) => emailChecklist(checkState(over)).map((i) => i.label);
+const bad = (over: Partial<EmailChecklistState> = {}) =>
+  emailChecklist(checkState(over)).filter((i) => !i.ok).map((i) => i.label);
+
+describe("subjectRuleOk — 제목 규칙은 2단계 노란 줄과 같은 사전을 쓴다", () => {
+  it("빈 제목은 통과가 아니다", () => {
+    expect(subjectRuleOk("")).toBe(false);
+    expect(subjectRuleOk("   ")).toBe(false);
+  });
+  it("금지 표현·이모지가 있으면 막힌다", () => {
+    expect(subjectRuleOk("무료 상담 안내")).toBe(false);
+    expect(subjectRuleOk("긴급 서류 요청")).toBe(false);
+    expect(subjectRuleOk("서류 제출 안내 🎉")).toBe(false);
+  });
+  it("22자를 넘으면 막힌다 — 다만 {회사명} 은 세지 않는다(수신자 이름으로 바뀐다)", () => {
+    expect(subjectRuleOk("가".repeat(23))).toBe(false);
+    expect(subjectRuleOk("가".repeat(22))).toBe(true);
+    expect(subjectRuleOk(`{회사명} ${"가".repeat(21)}`)).toBe(true);
+  });
+  it("★미리보기 문구가 비어도 제목 항목은 통과다 — 그건 둘째 항목이 따로 센다", () => {
+    const items = emailChecklist(checkState({ preheader: "" }));
+    expect(items[0].ok).toBe(true);
+    expect(items[1].ok).toBe(false);
+  });
+});
+
+describe("emailChecklist — 시안 §3단계의 아홉 줄", () => {
+  it("알림톡·채팅이면 빈 배열 — 이메일 안 쓰는 담당자에게 이메일 점검표를 내밀지 않는다", () => {
+    expect(emailChecklist(checkState({ channel: "chat" }))).toEqual([]);
+    expect(emailChecklist(checkState({ channel: "both" }))).toHaveLength(9);
+  });
+
+  it("항목 아홉 개가 시안 순서 그대로다", () => {
+    expect(labels()).toEqual([
+      "제목 22자 안 · 금지 표현 없음",
+      "미리보기 문구 있음",
+      "[확인 필요] 0개",
+      "사실 잠금 통과 — 원문의 값이 정리본에 그대로",
+      "광고 표현 없음 — 정보성 안내만 보냅니다",
+      "깨진 링크 0 (변수 든 링크는 「검사 불가」로 표시)",
+      "첨부는 보관함 링크로 정상",
+      "수신 설정 링크·수신거부 머리글 자동 포함",
+      "발신 도메인 wedly.kr 인증(DKIM·DMARC) 정상",
+    ]);
+  });
+
+  it("고칠 곳은 전부 2단계다 — 빨간 줄을 누르면 어디로 갈지가 항목마다 적혀 있다", () => {
+    expect(emailChecklist(checkState()).every((i) => i.goStep === 2)).toBe(true);
+  });
+
+  it("아무 문제가 없으면 아홉 줄 모두 통과", () => {
+    expect(bad()).toEqual([]);
+    expect(emailChecklistFailedCount(emailChecklist(checkState()))).toBe(0);
+  });
+
+  it("채우지 않은 [확인 필요] 가 하나라도 있으면 막힌다", () => {
+    expect(bad({ fillMarkers: ["[확인 필요: 요일]"], fillValues: {} })).toEqual(["[확인 필요] 0개"]);
+    expect(bad({ fillMarkers: ["[확인 필요: 요일]"], fillValues: { "[확인 필요: 요일]": "  " } })).toEqual([
+      "[확인 필요] 0개",
+    ]);
+    expect(bad({ fillMarkers: ["[확인 필요: 요일]"], fillValues: { "[확인 필요: 요일]": "금요일" } })).toEqual([]);
+  });
+
+  it("사실 잠금은 결과를 아직 못 받았을 때도 막는다 — 「모름」을 통과로 위장하지 않는다", () => {
+    expect(bad({ factLock: null })).toEqual(["사실 잠금 통과 — 원문의 값이 정리본에 그대로"]);
+    expect(bad({ factLock: { missing: ["9월 12일"], added: [], ok: false } })).toEqual([
+      "사실 잠금 통과 — 원문의 값이 정리본에 그대로",
+    ]);
+  });
+
+  it("광고로 읽히는 문장이 있으면 막힌다", () => {
+    expect(bad({ adSentences: ["지금 신청하면 무료입니다"] })).toEqual([
+      "광고 표현 없음 — 정보성 안내만 보냅니다",
+    ]);
+  });
+
+  it("첨부 총합이 10MB 를 넘으면 막힌다", () => {
+    expect(bad({ attachments: [{ bytes: 6 * 1024 * 1024 }, { bytes: 5 * 1024 * 1024 }] })).toEqual([
+      "첨부는 보관함 링크로 정상",
+    ]);
+    expect(bad({ attachments: [{ bytes: 10 * 1024 * 1024 }] })).toEqual([]);
+  });
+
+  it("여러 곳이 어긋나면 여러 줄이 빨개진다 — 하나만 알려 주고 끝내지 않는다", () => {
+    expect(bad({ subject: "무료", preheader: "", adSentences: ["광고 문장"] })).toEqual([
+      "제목 22자 안 · 금지 표현 없음",
+      "미리보기 문구 있음",
+      "광고 표현 없음 — 정보성 안내만 보냅니다",
+    ]);
+    expect(emailChecklistFailedCount(emailChecklist(checkState({ subject: "", preheader: "" })))).toBe(2);
+  });
+});
+
+describe("canConfirmSend — 통로별 판정", () => {
+  const ok9 = emailChecklist(checkState());
+  it("알림톡·채팅은 지금까지와 똑같다(채널 칸이 없는 옛 호출 포함)", () => {
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "결과 통보" })).toBe(true);
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "결과 통보", channel: "chat" })).toBe(true);
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "", channel: "chat" })).toBe(false);
+  });
+
+  it("이메일은 안내구분을 안 본다 — 알림톡 문안의 칸이라 이메일에는 없다", () => {
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "", channel: "email", emailChecks: ok9 })).toBe(true);
+  });
+
+  it("이메일은 점검 아홉 줄이 모두 통과해야 열린다", () => {
+    const oneBad = emailChecklist(checkState({ preheader: "" }));
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "", channel: "email", emailChecks: oneBad })).toBe(false);
+  });
+
+  it("★점검 결과를 못 받았으면 닫는다 — 「모름」을 통과로 읽지 않는다", () => {
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "", channel: "email" })).toBe(false);
+  });
+
+  it("「둘 다」는 두 조건을 모두 지켜야 한다", () => {
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "결과 통보", channel: "both", emailChecks: ok9 })).toBe(true);
+    // 안내구분만 빠져도 막힌다
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "", channel: "both", emailChecks: ok9 })).toBe(false);
+    // 점검만 어긋나도 막힌다
+    const oneBad = emailChecklist(checkState({ adSentences: ["광고"] }));
+    expect(canConfirmSend({ targetsOk: true, tooMany: false, noticeCategory: "결과 통보", channel: "both", emailChecks: oneBad })).toBe(false);
+  });
+
+  it("★대상·상한은 통로와 상관없이 본다 — 0명·상한 초과는 이메일에서도 막힌다", () => {
+    expect(canConfirmSend({ targetsOk: false, tooMany: false, noticeCategory: "", channel: "email", emailChecks: ok9 })).toBe(false);
+    expect(canConfirmSend({ targetsOk: true, tooMany: true, noticeCategory: "", channel: "email", emailChecks: ok9 })).toBe(false);
+  });
+});
+
+describe("emailSignalOf — 확인함 › 도착 › 보냄 › 반송 › 수신거부 › 제외", () => {
+  it("★반송·수신거부가 「확인함」보다 앞이다 — 서버 history.ts emailSignalOf 와 같은 순서", () => {
+    expect(emailSignalOf({ emailStatus: "bounced", emailViewedAt: "2026-09-05T01:00:00Z" })).toEqual({
+      label: "반송",
+      variant: "red",
+    });
+    expect(emailSignalOf({ emailStatus: "unsubscribed", emailDeliveredAt: "2026-09-05T01:00:00Z" })).toEqual({
+      label: "수신거부",
+      variant: "red",
+    });
+    // 스팸 신고도 결국 수신거부다(서버가 수신거부 명단에 올린다)
+    expect(emailSignalOf({ emailStatus: "complained" })?.label).toBe("수신거부");
+  });
+
+  it("확인함 › 도착 › 보냄 순으로 강한 신호가 이긴다", () => {
+    const t = "2026-09-05T01:00:00Z";
+    expect(emailSignalOf({ emailStatus: "sent", emailSentAt: t, emailDeliveredAt: t, emailViewedAt: t })).toEqual({
+      label: "확인함",
+      variant: "green",
+    });
+    expect(emailSignalOf({ emailStatus: "sent", emailSentAt: t, emailDeliveredAt: t })).toEqual({
+      label: "도착",
+      variant: "blue",
+    });
+    // 「보냄」은 뜻 없는 회색 점을 그리지 않는 기본형이다(딱지 정본 2026-08-26)
+    expect(emailSignalOf({ emailStatus: "sent", emailSentAt: t })).toEqual({ label: "보냄", variant: "default" });
+  });
+
+  it("제외는 사유를 그대로 딱지에 적는다 — 「수신거부 확인 불가」도 그대로", () => {
+    expect(emailSignalOf({ emailStatus: "skipped", emailSkipReason: "수신거부 확인 불가" })).toEqual({
+      label: "수신거부 확인 불가",
+      variant: "yellow",
+    });
+    expect(emailSignalOf({ emailStatus: "skipped", emailSkipReason: "이메일 없음" })?.label).toBe("이메일 없음");
+    // 사유가 안 적혀 있어도 제외됐다는 사실은 알린다
+    expect(emailSignalOf({ emailStatus: "skipped" })?.label).toBe("제외");
+  });
+
+  it("아직 아무 신호도 없으면 null — 없는 상태를 성공으로 위장하지 않는다", () => {
+    expect(emailSignalOf({})).toBeNull();
+    expect(emailSignalOf({ emailStatus: "pending" })).toBeNull();
+  });
+});
+
+describe("failureReasonOf — 이메일 사유까지 함께 적는다", () => {
+  it("이메일 칸이 없는 옛 응답·채팅 발송은 글자 하나 안 바뀐다", () => {
+    expect(failureReasonOf({ status: "failed", error: "번호 없음", alimtalkStatus: "" })).toBe("번호 없음");
+    expect(failureReasonOf({ status: "sent", error: "", alimtalkStatus: "failed" })).toBe(ALIMTALK_REASON_MISSING);
+    expect(failureReasonOf({ status: "sent", error: "", alimtalkStatus: "sent" })).toBe("—");
+  });
+
+  it("이메일만 실패하면 그 사유가 뜬다 — 「—」로 숨기지 않는다", () => {
+    expect(
+      failureReasonOf({ status: "skipped", error: "", alimtalkStatus: "", emailStatus: "failed", emailError: "주소 없음" }),
+    ).toBe("주소 없음");
+    expect(failureReasonOf({ status: "skipped", error: "", alimtalkStatus: "", emailStatus: "failed" })).toBe(
+      EMAIL_REASON_MISSING,
+    );
+  });
+
+  it("제외 사유도 그대로 보인다", () => {
+    expect(
+      failureReasonOf({ status: "sent", error: "", alimtalkStatus: "sent", emailStatus: "skipped", emailSkipReason: "중복 주소" }),
+    ).toBe("중복 주소");
+  });
+
+  it("★두 통로가 각각 실패하면 둘 다 적는다 — 한쪽만 적으면 나머지가 표에서 사라진다", () => {
+    expect(
+      failureReasonOf({
+        status: "sent",
+        error: "",
+        alimtalkStatus: "failed",
+        alimtalkError: "발신 프로필 차단",
+        emailStatus: "bounced",
+        emailError: "수신 서버가 되돌림",
+      }),
+    ).toBe("발신 프로필 차단 · 수신 서버가 되돌림");
+  });
+});
+
+describe("progressOf — 통로마다 세는 칸이 다르다", () => {
+  const job = {
+    total: 10,
+    sent: 3,
+    failed: 1,
+    chatTotal: 8,
+    emailTotal: 10,
+    emailSent: 5,
+    emailFailed: 0,
+  };
+
+  it("알림톡·채팅은 sent+failed / chatTotal", () => {
+    expect(progressOf(job, "chat")).toEqual({ done: 4, total: 8 });
+  });
+
+  it("이메일은 emailSent+emailFailed / emailTotal", () => {
+    expect(progressOf(job, "email")).toEqual({ done: 5, total: 10 });
+  });
+
+  it("「둘 다」는 두 통로를 각각 세어 더한다 — 한 사람에게 두 번 나가니 두 번 센다", () => {
+    expect(progressOf(job, "both")).toEqual({ done: 9, total: 18 });
+  });
+
+  it("통로별 인원을 모르면(되살린 화면) 작업 전체 인원으로 접는다 — 0이면 막대가 영영 안 찬다", () => {
+    expect(progressOf({ total: 12, sent: 2, failed: 0 }, "chat")).toEqual({ done: 2, total: 12 });
+    expect(progressOf({ total: 12, emailSent: 4, emailFailed: 1 }, "email")).toEqual({ done: 5, total: 12 });
+  });
+
+  it("★작업이 실제로 쓴 통로가 화면 고르개를 이긴다 — 새로고침 뒤 고르개는 기본값으로 돌아온다", () => {
+    const emailOnly = { total: 6, sent: 0, failed: 0, emailSent: 6, emailFailed: 0, channelChat: false, channelEmail: true };
+    // 화면 고르개는 "chat" 이지만 이 작업은 이메일만 보냈다 — 0/6 이 아니라 6/6 이어야 한다.
+    expect(progressOf(emailOnly, "chat")).toEqual({ done: 6, total: 6 });
+  });
+
+  it("값이 없거나 망가져도 「NaN / NaN」을 그리지 않는다", () => {
+    expect(progressOf(null, "chat")).toEqual({ done: 0, total: 0 });
+    expect(progressOf({}, "email")).toEqual({ done: 0, total: 0 });
+    expect(progressOf({ total: 5, sent: -3, failed: Number.NaN }, "chat")).toEqual({ done: 0, total: 5 });
+  });
+
+  it("막대 백분율은 0~100 밖으로 안 나간다", () => {
+    expect(progressPercent({ done: 0, total: 0 })).toBe(0);
+    expect(progressPercent({ done: 5, total: 10 })).toBe(50);
+    // 통로별 인원을 몰라 전체로 접었을 때 끝난 수가 더 클 수 있다
+    expect(progressPercent({ done: 20, total: 10 })).toBe(100);
+  });
+});
+
+describe("canStopSend — 실제로 멈출 수 있을 때만 그린다", () => {
+  it("★알림톡·채팅만 도는 작업에는 안 그린다 — 채팅 러너는 중단 표식을 읽지 않는다", () => {
+    expect(canStopSend({ status: "running", channelChat: true, channelEmail: false })).toBe(false);
+  });
+  it("이메일이 도는 동안에만 열린다", () => {
+    expect(canStopSend({ status: "done", emailStatus: "running", channelChat: false, channelEmail: true })).toBe(true);
+    expect(canStopSend({ status: "running", emailStatus: "running", channelChat: true, channelEmail: true })).toBe(true);
+  });
+  it("이메일이 끝났으면 닫는다", () => {
+    expect(canStopSend({ status: "done", emailStatus: "done", channelEmail: true })).toBe(false);
+  });
+  it("이미 눌렀으면 다시 안 눌린다", () => {
+    expect(canStopSend({ emailStatus: "running", channelEmail: true, stopRequested: true })).toBe(false);
+  });
+  it("작업이 없으면 안 그린다", () => {
+    expect(canStopSend(null)).toBe(false);
+  });
+});
+
+describe("sendRunning — 이메일만 보내는 작업은 status 가 처음부터 done 이다", () => {
+  it("★status 만 보면 이메일이 도는 내내 「끝났다」로 읽힌다", () => {
+    expect(sendRunning({ status: "done", emailStatus: "running", channelChat: false, channelEmail: true })).toBe(true);
+  });
+  it("채팅이 도는 중이면 도는 중", () => {
+    expect(sendRunning({ status: "running", channelChat: true, channelEmail: false })).toBe(true);
+  });
+  it("둘 다 끝났으면 끝난 것", () => {
+    expect(sendRunning({ status: "done", emailStatus: "done", channelChat: true, channelEmail: true })).toBe(false);
+    expect(sendRunning(null)).toBe(false);
+  });
+});
+
+describe("sendHeadline — 통로를 함께 보는 진행 머리글", () => {
+  it("★이메일 작업은 status 만 보면 시작하자마자 「끝났어요」가 뜬다", () => {
+    const job = { status: "done", emailStatus: "running", channelChat: false, channelEmail: true };
+    expect(progressHeadline(job.status)).toBe("발송이 끝났어요"); // 옛 판정(이래서 못 쓴다)
+    expect(sendHeadline(job)).toBe("보내는 중이에요");
+  });
+  it("중단을 누른 작업은 「중단했어요」", () => {
+    expect(
+      sendHeadline({ status: "done", emailStatus: "done", channelEmail: true, stopRequested: true }),
+    ).toBe("발송을 중단했어요");
+  });
+  it("두 통로가 다 끝나야 「끝났어요」 — 한쪽이 멈추면 멈춘 것", () => {
+    expect(sendHeadline({ status: "done", emailStatus: "done", channelChat: true, channelEmail: true })).toBe(
+      "발송이 끝났어요",
+    );
+    expect(sendHeadline({ status: "done", emailStatus: "failed", channelChat: true, channelEmail: true })).toBe(
+      "발송이 멈췄어요",
+    );
+    expect(sendHeadline({ status: "interrupted", channelChat: true, channelEmail: false })).toBe("발송이 멈췄어요");
+  });
+  it("진행을 아직 못 받았으면 「불러오는 중」 — 되살린 직후를 사고로 읽지 않게", () => {
+    expect(sendHeadline(null)).toBe("진행 상황을 불러오는 중…");
+    expect(sendHeadline({ status: "" })).toBe("진행 상황을 불러오는 중…");
   });
 });
