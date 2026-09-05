@@ -278,10 +278,9 @@ describe("발송 상세", () => {
     expect(html).toContain("받는 사람 31명");
   });
 
-  it("「엑셀로 받기」는 아직 준비 중이라 눌리지 않는다", () => {
-    expect(html).toContain("엑셀로 받기");
-    expect(html).toContain("준비 중");
-    expect(html).toContain("disabled");
+  it("「엑셀로 받기」 준비 중 표시는 없다 — 눌러도 안 되는 자리를 배포본에 두지 않는다", () => {
+    expect(html).not.toContain("엑셀로 받기");
+    expect(html).not.toContain("준비 중");
   });
 
   it("수신자 표에 신호와 마지막 신호 시각이 있다", () => {
@@ -441,9 +440,9 @@ describe("회사 상세", () => {
     expect(html).not.toContain("계약일");
   });
 
-  it("「상세창에서 보기」는 아직 준비 중이라 눌리지 않는다", () => {
-    expect(html).toContain("상세창에서 보기");
-    expect(html).toContain("준비 중");
+  it("「상세창에서 보기」 준비 중 표시는 없다 — 눌러도 안 되는 자리를 배포본에 두지 않는다", () => {
+    expect(html).not.toContain("상세창에서 보기");
+    expect(html).not.toContain("준비 중");
   });
 
   it("이력 표에 시각·채널·제목·보낸 사람·신호·주소 출처가 있다", () => {

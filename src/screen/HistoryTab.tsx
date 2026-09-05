@@ -147,7 +147,7 @@ function DetailHead({
 }: {
   title: string;
   meta: string;
-  right: React.ReactNode;
+  right?: React.ReactNode;
 }) {
   return (
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-wedly-bd bg-white px-4 py-3 shadow-[0_1px_2px_rgba(10,34,68,0.05),0_6px_18px_rgba(10,34,68,0.08)]">
@@ -155,7 +155,9 @@ function DetailHead({
         <p className="text-wedly-sub font-semibold text-wedly-t1 break-keep">{title || "—"}</p>
         <p className="mt-0.5 text-wedly-hint text-wedly-t2 break-keep">{meta}</p>
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">{right}</div>
+      {right != null && (
+        <div className="flex flex-wrap items-center justify-end gap-2">{right}</div>
+      )}
     </div>
   );
 }
@@ -424,14 +426,6 @@ export function HistoryTab({
           <DetailHead
             title={job.title}
             meta={jobMetaLine(job)}
-            right={
-              <>
-                <Badge variant="yellow">준비 중</Badge>
-                <Button type="button" variant="secondary" size="sm" disabled>
-                  엑셀로 받기
-                </Button>
-              </>
-            }
           />
           <TableBox min="min-w-[880px]">
             <thead className="text-wedly-tablehead">
@@ -512,10 +506,6 @@ export function HistoryTab({
               <>
                 <Badge variant="blue">받은 안내 {won(company.items.length)}건</Badge>
                 <Signal badge={rowSignalBadge(company.items[0] ?? {})} />
-                <Badge variant="yellow">준비 중</Badge>
-                <Button type="button" variant="secondary" size="sm" disabled>
-                  상세창에서 보기
-                </Button>
               </>
             }
           />

@@ -379,14 +379,6 @@ export function Step1Targets({
               tone="warning"
               title={`이메일이 없는 분 ${won(noEmailCount)}명은 이 발송에서 자동 제외됩니다`}
               className="mb-4"
-              actions={
-                <>
-                  <Badge variant="yellow">준비 중</Badge>
-                  <Button type="button" variant="secondary" size="sm" disabled>
-                    주소 요청 안내 보내기
-                  </Button>
-                </>
-              }
             >
               표의 「이메일 없음」 줄에서 <b className="font-semibold text-wedly-t1">직접 입력</b>을 누르면 주소를
               넣어 바로 보낼 수 있어요(기본으로 고객 자료에도 저장, 누가 언제 넣었는지 기록). 여러 명이면
