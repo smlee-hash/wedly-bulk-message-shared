@@ -65,6 +65,7 @@ import {
   emailReady,
   insertAtCursor,
   isAbortError,
+  previewLockUpdate,
   readPlainTextStream,
   shouldAutoConvert,
   showFillForm,
@@ -89,6 +90,7 @@ import {
   NOTICE_CATEGORIES,
   alimtalkFailedCountOf,
   canConfirmSend,
+  canRestartSend,
   canStopSend,
   emailChecklist,
   emailChecklistFailedCount,
@@ -232,6 +234,9 @@ function loadErrorText(err: unknown, fallback: string): string {
  */
 const JOB_ID_STORE_KEY = "wedly-bulk-message:jobId";
 
+/** 통로 첫 값 — 화면을 처음 열 때와 「새 발송 시작」이 **같은 값**을 쓰게 이름을 붙여 둔다. */
+const DEFAULT_CHANNEL: BulkChannel = "chat";
+
 export function useBulkState() {
   const [step, setStep] = useState<Step>(1);
   // 오류 알림 — window.alert 금지. 화면 위 빨간 상태 박스로 띄우고 5초 뒤 지운다.
@@ -280,7 +285,7 @@ export function useBulkState() {
    * 어떤 통로로 보낼까 — 기본은 「알림톡·채팅」(지금까지 하던 것과 같다).
    * 이 값 하나가 표의 이메일 열·숫자 카드·「전체 고르기」·발송 몸통까지 전부 가른다.
    */
-  const [channel, setChannel] = useState<BulkChannel>("chat");
+  const [channel, setChannel] = useState<BulkChannel>(DEFAULT_CHANNEL);
   /** 손으로 넣은 이메일 — 열쇠는 줄 열쇠(keyOf). 확인을 누른 것만 들어온다. */
   const [manualEmails, setManualEmails] = useState<Map<string, ManualEmail>>(new Map());
   /** 지금 칸에서 고치고 있는 줄 — 여러 줄을 동시에 열어 두고 위에서 아래로 채울 수 있다. */
@@ -931,6 +936,9 @@ export function useBulkState() {
   const requestPreview = useCallback(async () => {
     const body = emailComposedBody;
     if (!body) return;
+    // ★원문을 함께 보낸다 — 서버가 원문과 **지금 본문**을 대조해 사실·광고 잠금을 다시 내준다.
+    //  「본문 고치기」로 고친 뒤에도 잠금이 따라오게 하는 유일한 길이다(convert 응답은 옛 본문 판정).
+    const originalForLock = originalTextRef.current.trim();
     previewAbortRef.current?.abort();
     const ac = new AbortController();
     previewAbortRef.current = ac;
@@ -943,6 +951,7 @@ export function useBulkState() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           body,
+          ...(originalForLock ? { originalText: originalForLock } : {}),
           ...(previewRecipient
             ? {
                 recipient: {
@@ -957,12 +966,22 @@ export function useBulkState() {
       });
       const payload = await res.json().catch(() => null);
       if (ac.signal.aborted || gen !== previewGen.current) return;
-      const p = payload as { success?: unknown; data?: { html?: unknown } } | null;
+      const p = payload as {
+        success?: unknown;
+        // factLock·adSentences 는 **새 서버만** 준다 — 모양 검사는 previewLockUpdate 가 한다.
+        data?: { html?: unknown; factLock?: unknown; adSentences?: unknown };
+      } | null;
       const html = p?.data?.html;
       if (!res.ok || p?.success !== true || typeof html !== "string") {
         throw new Error(convertApiErrorMessage(payload, "미리보기를 불러오지 못했어요."));
       }
       setPreviewHtml(html);
+      // ★convert 응답이 세팅하는 것과 **같은 상태 변수**를 갱신한다 — 두 벌로 나누면
+      //  2단계 잠금 표시와 3단계 점검이 서로 다른 판정을 말한다.
+      // ★칸이 없는 옛 서버 응답이면 빈 손이 와서 들고 있던 값이 그대로 남는다(잠금이 조용히 풀리지 않게).
+      const lock = previewLockUpdate(p.data);
+      if (lock.factLock) setFactLock(lock.factLock);
+      if (lock.adSentences) setAdSentences(lock.adSentences);
     } catch (e) {
       if (isAbortError(e) || ac.signal.aborted) return;
       if (gen !== previewGen.current) return;
@@ -1324,6 +1343,81 @@ export function useBulkState() {
     }
   }, [jobId, alertError]);
 
+  /**
+   * 「새 발송 시작」 — 끝난 발송을 접고 1단계 처음 상태로 돌아간다(2026-09-06 브라우저 QA 반려 7).
+   *
+   * ★적어 둔 작업 번호를 **반드시** 지운다 — 안 지우면 새로고침이 끝난 발송을 다시 열어
+   *  1·2·3단계 단추가 잠긴 채로 갇힌다(404 일 때만 지우던 것이 이 반려의 원인이다).
+   * ★발송 기록은 서버에 그대로 남는다 — 지우는 것은 이 화면이 들고 있던 값뿐이다.
+   * ★손으로 넣은 주소·고친 칸도 함께 비운다 — 앞 발송에서 친 주소가 다음 발송에 조용히 따라가면 안 된다.
+   */
+  const restartSend = useCallback(() => {
+    try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }
+    // 돌아가는 중이던 변환·미리보기 응답이 새 화면에 떨어지지 않게 번호표를 올리고 끊는다.
+    convertGen.current += 1;
+    emailGen.current += 1;
+    previewGen.current += 1;
+    convertAbortRef.current?.abort();
+    emailAbortRef.current?.abort();
+    previewAbortRef.current?.abort();
+
+    // 3단계 — 발송 흔적
+    setJobId("");
+    setProgress(null);
+    setPollError("");
+    setSkipped(null);
+    setBlockedCount(0);
+    setSendOutOfScopeCount(0);
+    setSendWarnings([]);
+    setSendStartedAt(null);
+    setSendFinishedAt(null);
+    setRestoredFromStore(false);
+    setConfirmOpen(false);
+    setStopOpen(false);
+    setNoticeCategory("");
+
+    // 1단계 — 고른 사람·직접 입력·통로
+    setPicked(new Map());
+    setManualEmails(new Map());
+    setManualEdits(new Map());
+    setDroppedPicked([]);
+    setChannel(DEFAULT_CHANNEL);
+
+    // 2단계 — 원문과 만들어 둔 안내문(채팅·이메일 둘 다)
+    setOriginalText("");
+    setFinalText("");
+    setFillValues({});
+    setAdWords([]);
+    setConverted(false);
+    setEditing(false);
+    setStreamHasChunk(false);
+    setLastConvertedOriginal("");
+    setTestDone("");
+    setTestError("");
+    setEmailBody(null);
+    setEmailSubject("");
+    setEmailPreheader("");
+    setEmailWarnings([]);
+    setAdSentences([]);
+    setFactLock(null);
+    setEmailFilled({});
+    setEmailAttachments([]);
+    setPreviewHtml("");
+    setPreviewReal(false);
+    setPreviewIdx(0);
+    setLastEmailOriginal("");
+    setEmailError("");
+    setPreviewError("");
+    setAttachError("");
+    setEmailTestDone("");
+    setEmailTestError("");
+
+    setStep(1);
+  }, []);
+
+  /** 끝난 발송인가 — 「새 발송 시작」을 그릴 조건(보내는 중에는 안 그린다). */
+  const canRestart = !!jobId && canRestartSend(progress);
+
   const pending = progress ? Math.max(0, progress.total - progress.sent - progress.failed) : 0;
   /** 채널톡에는 안내가 심겼는데 **알림톡만** 못 나간 사람 수. 요약의 「보냄」에 섞여 있어 따로 센다. */
   const alimtalkFailedCount = alimtalkFailedCountOf(progress?.recipients ?? []);
@@ -1359,6 +1453,12 @@ export function useBulkState() {
    *  목록 줄에 회사 이름이 없어 화면이 다시 거르면 **맞는 결과가 사라진다.**
    */
   const [historyLoadedQ, setHistoryLoadedQ] = useState("");
+  /**
+   * 지금 들고 있는 목록이 **어느 보기**의 것인가 — 아직 안 읽은 보기의 건수를 적지 않으려고 든다.
+   * ★「이 회사의 다른 발송 ›」로 뛰면 보기만 사업장별로 바뀌고 목록은 안 읽는다.
+   *  그때 머리줄이 「사업장 0곳」이라고 말하던 것이 2026-09-06 배포본 검사의 반려 4다.
+   */
+  const [historyLoadedMode, setHistoryLoadedMode] = useState<HistoryMode | null>(null);
   /** 지금 무엇을 보고 있나 — 목록 / 발송 상세 / 회사 상세. */
   const [historyView, setHistoryView] = useState<"list" | "job" | "company">("list");
   const [historyJob, setHistoryJob] = useState<HistoryJobRow | null>(null);
@@ -1452,6 +1552,7 @@ export function useBulkState() {
       if (mode === "companies") setHistoryCompanies(rows as HistoryCompanyRow[]);
       else setHistoryJobs(rows as HistoryJobRow[]);
       setHistoryLoadedQ(q);
+      setHistoryLoadedMode(mode);
     } catch (e) {
       if (seq !== historySeq.current) return;
       setHistoryError(`발송 기록을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
@@ -1848,6 +1949,8 @@ export function useBulkState() {
     setStopOpen,
     stopping,
     stopJob,
+    canRestart,
+    restartSend,
     sendStartedAt,
     sendFinishedAt,
     // 발송 기록 탭
@@ -1855,6 +1958,7 @@ export function useBulkState() {
     setHistoryActive,
     historyMode,
     setHistoryMode,
+    historyLoadedMode,
     historyQ,
     setHistoryQ,
     historyLoadedQ,

@@ -9,6 +9,7 @@ import {
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
+  canRestartSend,
   canStopSend,
   emailChecklist,
   emailChecklistFailedCount,
@@ -388,10 +389,14 @@ describe("subjectRuleOk — 제목 규칙은 2단계 노란 줄과 같은 사전
     expect(subjectRuleOk("긴급 서류 요청")).toBe(false);
     expect(subjectRuleOk("서류 제출 안내 🎉")).toBe(false);
   });
-  it("22자를 넘으면 막힌다 — 다만 {회사명} 은 세지 않는다(수신자 이름으로 바뀐다)", () => {
-    expect(subjectRuleOk("가".repeat(23))).toBe(false);
-    expect(subjectRuleOk("가".repeat(22))).toBe(true);
-    expect(subjectRuleOk(`{회사명} ${"가".repeat(21)}`)).toBe(true);
+  it("서버 상한 30자를 넘어야 막힌다 — 다만 {회사명} 은 세지 않는다(수신자 이름으로 바뀐다)", () => {
+    // 22자는 권장일 뿐이다(2026-09-06) — 23~30자는 통과시키고 노란 경고만 붙인다.
+    expect(subjectRuleOk("가".repeat(23))).toBe(true);
+    expect(subjectRuleOk("가".repeat(30))).toBe(true);
+    expect(subjectRuleOk("가".repeat(31))).toBe(false);
+    // 「{회사명}」 은 안 세지만 뒤의 공백 한 칸은 센다 — 29자 + 공백 = 30자로 아직 통과.
+    expect(subjectRuleOk(`{회사명} ${"가".repeat(29)}`)).toBe(true);
+    expect(subjectRuleOk(`{회사명} ${"가".repeat(30)}`)).toBe(false);
   });
   it("★미리보기 문구가 비어도 제목 항목은 통과다 — 그건 둘째 항목이 따로 센다", () => {
     const items = emailChecklist(checkState({ preheader: "" }));
@@ -408,7 +413,7 @@ describe("emailChecklist — 시안 §3단계의 아홉 줄", () => {
 
   it("항목 아홉 개가 시안 순서 그대로다", () => {
     expect(labels()).toEqual([
-      "제목 22자 안 · 금지 표현 없음",
+      "제목 30자 안 · 금지 표현 없음",
       "미리보기 문구 있음",
       "[확인 필요] 0개",
       "사실 잠금 통과 — 원문의 값이 정리본에 그대로",
@@ -459,11 +464,47 @@ describe("emailChecklist — 시안 §3단계의 아홉 줄", () => {
 
   it("여러 곳이 어긋나면 여러 줄이 빨개진다 — 하나만 알려 주고 끝내지 않는다", () => {
     expect(bad({ subject: "무료", preheader: "", adSentences: ["광고 문장"] })).toEqual([
-      "제목 22자 안 · 금지 표현 없음",
+      "제목 30자 안 · 금지 표현 없음",
       "미리보기 문구 있음",
       "광고 표현 없음 — 정보성 안내만 보냅니다",
     ]);
     expect(emailChecklistFailedCount(emailChecklist(checkState({ subject: "", preheader: "" })))).toBe(2);
+  });
+});
+
+describe("제목 길이 — 22자는 권장, 30자가 서버 상한(2026-09-06 배포본 검사 반려 3)", () => {
+  const checksOf = (subject: string) => emailChecklist(checkState({ subject }));
+  const sendable = (subject: string) =>
+    canConfirmSend({
+      targetsOk: true,
+      tooMany: false,
+      noticeCategory: "",
+      channel: "email",
+      emailChecks: checksOf(subject),
+    });
+
+  it("23자는 통과하되 노란 경고가 붙는다 — 권장을 넘겼을 뿐 보낼 수 있다", () => {
+    const item = checksOf("가".repeat(23))[0];
+    expect(item.ok).toBe(true);
+    expect(item.warn).toBe(true);
+    expect(item.note).toBe("권장 22자를 넘어요 — 받은편지함에서 잘릴 수 있어요");
+    // 통과이므로 「미통과 N건」에도 안 세고 보내기도 안 잠긴다
+    expect(emailChecklistFailedCount(checksOf("가".repeat(23)))).toBe(0);
+    expect(sendable("가".repeat(23))).toBe(true);
+    // 22자 안이면 경고도 없다
+    expect(checksOf("가".repeat(22))[0].warn).toBe(false);
+    expect(checksOf("가".repeat(22))[0].note).toBeUndefined();
+  });
+
+  it("31자는 막힌다 — 서버 상한(30자)을 넘으면 보내기가 잠긴다", () => {
+    const checks = checksOf("가".repeat(31));
+    expect(checks[0].ok).toBe(false);
+    expect(checks[0].warn).toBe(false);
+    expect(emailChecklistFailedCount(checks)).toBe(1);
+    expect(sendable("가".repeat(31))).toBe(false);
+    // 경계 한 글자 — 30자는 아직 통과(경고만)
+    expect(checksOf("가".repeat(30))[0].ok).toBe(true);
+    expect(checksOf("가".repeat(30))[0].warn).toBe(true);
   });
 });
 
@@ -686,5 +727,44 @@ describe("sendHeadline — 통로를 함께 보는 진행 머리글", () => {
   it("진행을 아직 못 받았으면 「불러오는 중」 — 되살린 직후를 사고로 읽지 않게", () => {
     expect(sendHeadline(null)).toBe("진행 상황을 불러오는 중…");
     expect(sendHeadline({ status: "" })).toBe("진행 상황을 불러오는 중…");
+  });
+});
+
+/* ══════════ 끝난 뒤 새 발송 (2026-09-06 브라우저 QA 반려 7) ══════════ */
+
+describe("canRestartSend — 발송이 끝난 뒤에만 「새 발송 시작」을 그린다", () => {
+  it("도는 중에는 안 그린다 — 보내는 도중에 처음으로 돌아갈 길을 주지 않는다", () => {
+    expect(canRestartSend({ status: "running", channelChat: true })).toBe(false);
+    // 이메일만 보내는 작업은 status 가 처음부터 done 이다 — emailStatus 를 함께 본다
+    expect(canRestartSend({ status: "done", emailStatus: "running", channelChat: false, channelEmail: true })).toBe(false);
+  });
+
+  it("끝났으면(완료·중단·실패) 그린다", () => {
+    expect(canRestartSend({ status: "done", channelChat: true })).toBe(true);
+    expect(canRestartSend({ status: "interrupted", channelChat: true })).toBe(true);
+    expect(canRestartSend({ status: "failed", channelChat: true })).toBe(true);
+    expect(canRestartSend({ status: "done", emailStatus: "done", channelChat: false, channelEmail: true })).toBe(true);
+    expect(canRestartSend({ status: "done", emailStatus: "stopped", channelChat: false, channelEmail: true })).toBe(true);
+  });
+
+  it("진행을 아직 못 받았으면 안 그린다 — 되살린 직후 「끝났다」로 위장하지 않는다", () => {
+    expect(canRestartSend(null)).toBe(false);
+    expect(canRestartSend(undefined)).toBe(false);
+    expect(canRestartSend({})).toBe(false);
+  });
+
+  it("배선까지 본다 — 누르면 적어 둔 작업 번호를 지우고 1단계 처음 상태로 돌아간다", () => {
+    const hookSrc = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+    expect(hookSrc).toContain("const restartSend = useCallback(() => {");
+    // 보관한 작업 번호를 지운다 — 안 지우면 새로고침이 끝난 발송을 다시 열어 화면이 갇힌다
+    expect(hookSrc).toContain("try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }");
+    // 진행·작업 번호를 비우고
+    expect(hookSrc).toContain("setJobId(\"\");");
+    expect(hookSrc).toContain("setProgress(null);");
+    // 1단계 처음 상태로(고른 사람 · 원문 · 통로 기본값) 돌아간 뒤 1단계를 연다
+    expect(hookSrc).toContain("setPicked(new Map());");
+    expect(hookSrc).toContain("setOriginalText(\"\");");
+    expect(hookSrc).toContain("setChannel(DEFAULT_CHANNEL);");
+    expect(hookSrc).toContain("canRestartSend(progress)");
   });
 });

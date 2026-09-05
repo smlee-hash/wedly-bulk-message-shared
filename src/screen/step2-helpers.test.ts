@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { emptyEmailBody, type BulkEmailBody } from "../rules/email-body";
+import { emptyEmailBody, type BulkEmailBody, type EmailFactLock } from "../rules/email-body";
 import {
   ATTACH_TOO_LARGE_NOTICE,
   ATTACH_TOTAL_MAX_BYTES,
@@ -34,6 +36,7 @@ import {
   isAbortError,
   needsFillLabel,
   originalTooShort,
+  previewLockUpdate,
   showFillForm,
   readPlainTextStream,
   shouldAutoConvert,
@@ -665,5 +668,75 @@ describe("이메일 2단계 고정 문구", () => {
     expect(EMAIL_TEST_SEND_NOTE).toBe(
       "시험 발송에는 개인화 값이 들어가지 않아요 — 변수 확인은 「실제 수신자로 보기」로",
     );
+  });
+});
+
+/* ══════════ 미리보기 응답의 잠금 갱신 (2026-09-06 배포본 검사 반려 1) ══════════ */
+
+describe("previewLockUpdate — 미리보기를 새로 받을 때마다 사실·광고 잠금을 다시 읽는다", () => {
+  it("두 칸이 다 오면 그대로 읽는다", () => {
+    const u = previewLockUpdate({
+      html: "<html></html>",
+      factLock: { ok: false, missing: ["9월 12일"], added: [] },
+      adSentences: ["지금 신청하면 무료입니다"],
+    });
+    expect(u.factLock).toEqual({ ok: false, missing: ["9월 12일"], added: [] });
+    expect(u.adSentences).toEqual(["지금 신청하면 무료입니다"]);
+  });
+
+  it("칸이 없는 옛 서버 응답은 빈 손 — 화면이 들고 있던 값을 그대로 둔다", () => {
+    expect(previewLockUpdate({ html: "<html></html>" })).toEqual({});
+    expect(previewLockUpdate(null)).toEqual({});
+    expect(previewLockUpdate("망가진 응답")).toEqual({});
+  });
+
+  it("모양이 아닌 factLock 은 안 읽는다 — 「모름」을 통과로 위장하지 않는다", () => {
+    expect(previewLockUpdate({ factLock: { missing: [], added: [] } }).factLock).toBeUndefined();
+    expect(previewLockUpdate({ factLock: "ok" }).factLock).toBeUndefined();
+    // 목록 칸만 망가졌으면 판정(ok)은 살리고 목록은 비운다 — 판정을 통째로 버리면 잠금이 옛 값에 묶인다.
+    expect(previewLockUpdate({ factLock: { ok: true, missing: null, added: 3 } }).factLock).toEqual({
+      ok: true,
+      missing: [],
+      added: [],
+    });
+    // 글자가 아닌 항목은 버린다(「[object Object]」를 화면에 인용하지 않게)
+    expect(previewLockUpdate({ adSentences: ["광고 문장", 3, null] }).adSentences).toEqual(["광고 문장"]);
+  });
+
+  it("본문을 고쳐 잠긴 응답이 오면 2단계 「다음」이 잠기고, 다시 통과 응답이 오면 풀린다", () => {
+    const ready = (lock: EmailFactLock | null, ads: string[]) =>
+      emailReady({
+        subject: "장려금 2차 서류 제출 안내",
+        adSentences: ads,
+        factLock: lock,
+        fillMarkers: [],
+        fillValues: {},
+      });
+    const locked = previewLockUpdate({ factLock: { ok: false, missing: ["9월 12일"], added: [] }, adSentences: [] });
+    expect(ready(locked.factLock ?? null, locked.adSentences ?? [])).toBe(false);
+    // 잠긴 사실을 사람이 볼 수 있어야 한다 — 상자 문구도 같은 값에서 나온다.
+    expect(factLockNotice(locked.factLock ?? null)?.tone).toBe("error");
+
+    const unlocked = previewLockUpdate({ factLock: { ok: true, missing: [], added: [] }, adSentences: [] });
+    expect(ready(unlocked.factLock ?? null, unlocked.adSentences ?? [])).toBe(true);
+    expect(factLockNotice(unlocked.factLock ?? null)?.tone).toBe("success");
+
+    // 미리보기가 광고 문장을 실어 와도 잠긴다
+    const ad = previewLockUpdate({
+      factLock: { ok: true, missing: [], added: [] },
+      adSentences: ["지금 바로 신청하세요"],
+    });
+    expect(ready(ad.factLock ?? null, ad.adSentences ?? [])).toBe(false);
+  });
+
+  it("화면 배선까지 본다 — 미리보기 요청에 원문을 싣고, convert 와 같은 상태 변수를 갱신한다", () => {
+    const hookSrc = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+    // 요청: 서버가 원문과 지금 본문을 대조해야 잠금을 다시 낼 수 있다
+    expect(hookSrc).toContain("const originalForLock = originalTextRef.current.trim();");
+    expect(hookSrc).toContain("...(originalForLock ? { originalText: originalForLock } : {}),");
+    // 응답: convert 가 세팅하는 것과 **같은** setFactLock·setAdSentences 를 쓴다
+    expect(hookSrc).toContain("const lock = previewLockUpdate(p.data);");
+    expect(hookSrc).toContain("if (lock.factLock) setFactLock(lock.factLock);");
+    expect(hookSrc).toContain("if (lock.adSentences) setAdSentences(lock.adSentences);");
   });
 });

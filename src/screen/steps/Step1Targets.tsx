@@ -87,7 +87,8 @@ function EmailCell({
           aria-label={`${who} 이메일 주소`}
           aria-invalid={edit.error ? true : undefined}
           aria-describedby={edit.error ? errorId : undefined}
-          className={cn("h-8 w-[190px]", edit.error && "border-wedly-red")}
+          /* ★고정 폭 — 늘어나는 칸이면 같은 줄의 「발송」 딱지가 눌려 3~4줄로 무너진다(1280px 실측). */
+          className={cn("h-8 w-56", edit.error && "border-wedly-red")}
         />
         <Button type="button" size="xs" onClick={onSave}>
           확인
@@ -373,8 +374,18 @@ export function Step1Targets({
             )}
           </div>
 
-          {/* ★이메일이 없는 분을 숨기지 않는다 — 표에 남겨 두고 칸에서 주소를 넣게 한다(설계서 §4-3-1). */}
-          {emailShown && !loadingTargets && noEmailCount > 0 && (
+          {/* ★이메일이 없는 분을 숨기지 않는다 — 표에 남겨 두고 칸에서 주소를 넣게 한다(설계서 §4-3-1).
+              ★「둘 다」에서는 **자동 제외가 아니다** — 알림톡·채팅으로는 그대로 나간다(2026-09-06 반려 2).
+                그때는 같은 자리에 정보 톤으로 「어떻게 받는지」를 적는다. */}
+          {channel === "both" && !loadingTargets && noEmailCount > 0 && (
+            <StatusBox
+              tone="info"
+              title={`이메일이 없는 ${won(noEmailCount)}명은 알림톡·채팅으로만 받아요 — 표에서 직접 입력하면 이메일도 함께 갑니다`}
+              className="mb-4"
+            />
+          )}
+
+          {channel === "email" && !loadingTargets && noEmailCount > 0 && (
             <StatusBox
               tone="warning"
               title={`이메일이 없는 분 ${won(noEmailCount)}명은 이 발송에서 자동 제외됩니다`}
@@ -403,12 +414,14 @@ export function Step1Targets({
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">대표명</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">연락처</th>
                   {emailShown && (
-                    <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">이메일</th>
+                    // 「직접 입력」을 여는 동안에도 이 열이 다른 열을 밀지 않게 최소 폭을 준다.
+                    <th scope="col" className="sticky top-0 z-10 min-w-[280px] bg-wedly-accent px-3 py-2.5">이메일</th>
                   )}
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">계약일</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">진행상태</th>
                   <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">담당</th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">발송</th>
+                  {/* 딱지가 한 줄로 서려면 이 열이 그만큼은 있어야 한다(「번호 없음 · 이메일 없음」 기준). */}
+                  <th scope="col" className="sticky top-0 z-10 min-w-[150px] bg-wedly-accent px-3 py-2.5">발송</th>
                 </tr>
               </thead>
               <tbody>
@@ -462,7 +475,7 @@ export function Step1Targets({
                         {displayPhone(t)}
                       </td>
                       {emailShown && (
-                        <td className={cn("min-w-0 px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                        <td className={cn("min-w-[280px] px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                           <EmailCell
                             row={t}
                             edit={manualEdits.get(keyOf(t))}
@@ -496,13 +509,16 @@ export function Step1Targets({
                       <td className={cn("px-3 py-2 text-wedly-sub break-keep", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.manager || "—"}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="min-w-[150px] px-3 py-2">
                         {/* ★사유 글자와 칩 색이 같은 값에서 나온다(excludeChipVariant) — 색이 거짓말을 하지 않게.
                             줄의 sendable·excludeReason 은 고른 채널 기준으로 이미 갈아 끼운 값이다. */}
+                        {/* ★딱지 글자는 한 줄로 세운다 — 1280px 실측에서 「발송 가 / 능」으로 끊겼다. */}
                         {t.sendable ? (
-                          <Badge variant="green">발송 가능</Badge>
+                          <Badge variant="green" className="whitespace-nowrap">발송 가능</Badge>
                         ) : (
-                          <Badge variant={excludeChipVariant(t.excludeReason)}>{t.excludeReason || "제외"}</Badge>
+                          <Badge variant={excludeChipVariant(t.excludeReason)} className="whitespace-nowrap">
+                            {t.excludeReason || "제외"}
+                          </Badge>
                         )}
                       </td>
                     </tr>

@@ -171,6 +171,12 @@ export interface HistoryTabProps {
   setQ: (v: string) => void;
   /** 지금 목록이 답하고 있는 검색어 — 이 값과 `q` 가 다를 때만 화면이 스스로 좁힌다. */
   loadedQ: string;
+  /**
+   * 지금 들고 있는 목록이 **어느 보기**의 것인가(아직 아무것도 안 읽었으면 null).
+   * ★건수 문구는 이 값이 지금 보기와 같을 때만 적는다 — 「이 회사의 다른 발송 ›」로 뛰면
+   *  보기만 사업장별로 바뀌고 목록은 안 읽어, 예전에는 「사업장 0곳」이라고 거짓말했다.
+   */
+  loadedMode: HistoryMode | null;
   jobs: HistoryJobRow[];
   companies: HistoryCompanyRow[];
   view: "list" | "job" | "company";
@@ -198,6 +204,7 @@ export function HistoryTab({
   q,
   setQ,
   loadedQ,
+  loadedMode,
   jobs,
   companies,
   view,
@@ -282,7 +289,7 @@ export function HistoryTab({
         </div>
 
         <span className="text-wedly-hint text-wedly-muted tabular-nums break-keep" aria-live="polite">
-          {historyCountLine(mode, listCount, q)}
+          {loadedMode === mode ? historyCountLine(mode, listCount, q) : ""}
         </span>
       </div>
 

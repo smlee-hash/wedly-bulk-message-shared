@@ -109,6 +109,8 @@ function props(over: Partial<Step3ConfirmProps> = {}): Step3ConfirmProps {
     stopJob: () => {},
     sendStartedAt: null,
     sendFinishedAt: null,
+    canRestart: false,
+    restartSend: () => {},
     ...over,
   };
 }
@@ -335,5 +337,22 @@ describe("확인 모달 — 브라우저 confirm 을 쓰지 않는다", () => {
     expect(markup).toContain("지금까지 나간 1명분은 그대로 갑니다");
     expect(markup).toContain("남은 2명에게는 보내지 않아요");
     expect(markup).toContain("계속 보내기");
+  });
+});
+
+describe("끝난 뒤 새 발송 (2026-09-06 브라우저 QA 반려 7)", () => {
+  it("발송이 끝났을 때만 「새 발송 시작」이 선다", () => {
+    // 배포본 실측: 끝난 뒤 1·2·3단계 단추가 전부 잠겨, 같은 탭에서 새 발송을 시작할 길이 없었다.
+    const running = html({ jobId: "job_1", progress: progress(), canRestart: false });
+    expect(running).not.toContain("새 발송 시작");
+
+    const done = html({ jobId: "job_1", progress: progress({ emailStatus: "done" }), canRestart: true });
+    expect(done).toContain("새 발송 시작");
+    // 무엇이 없어지는지 함께 적는다 — 눌러 놓고 「기록이 지워졌나」로 읽지 않게
+    expect(done).toContain("발송 기록");
+  });
+
+  it("발송 전(작업 번호가 없을 때)에는 아예 안 그린다", () => {
+    expect(html({ jobId: "", canRestart: true })).not.toContain("새 발송 시작");
   });
 });

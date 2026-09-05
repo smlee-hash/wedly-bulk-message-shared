@@ -226,8 +226,10 @@ export const PREVIEW_DEBOUNCE_MS = 300;
 export const EMAIL_FROM_ADDRESS = "consulting@wedly.kr";
 /** 제목 앞에 늘 붙는 칩 — 담당자가 지울 수 없다. */
 export const EMAIL_SUBJECT_CHIP = "[WEDLY]";
-/** 제목 권장 상한. 휴대폰 받은편지함이 25자쯤에서 자른다. */
+/** 제목 권장 상한. 휴대폰 받은편지함이 25자쯤에서 자른다. **막지는 않는다**(3단계도 경고까지). */
 export const SUBJECT_SOFT_MAX = 22;
+/** 제목 **서버 상한**. 여기를 넘으면 발송이 잠긴다(3단계 점검). */
+export const SUBJECT_HARD_MAX = 30;
 export const EMAIL_STEP2_NOTE = "[확인 필요]가 다 채워지고 광고 표현이 없어야 다음으로 갈 수 있어요";
 export const EMAIL_TEST_SEND_NOTE =
   "시험 발송에는 개인화 값이 들어가지 않아요 — 변수 확인은 「실제 수신자로 보기」로";
@@ -246,13 +248,26 @@ const SUBJECT_EMOJI = /[\u{1F300}-\u{1FAFF}]/u;
  * 받은편지함 카드 밑에 뜨는 노란 줄. **막지는 않는다** — 알려만 주고 판단은 담당자가.
  * ★길이는 `{회사명}` 을 뺀 글자로 센다 — 그 변수는 수신자 이름으로 바뀌므로 그대로 세면 잔소리가 는다.
  */
+/**
+ * 제목 글자 수 — `{회사명}` 은 빼고 센다(수신자 이름으로 바뀌므로).
+ * ★2단계 노란 줄과 3단계 점검이 **이 함수 하나**로 센다. 두 곳이 따로 세면 한쪽만 잔소리한다.
+ */
+export function subjectVisibleLength(subject: string): number {
+  return [...subject.replaceAll("{회사명}", "")].length;
+}
+
+/** 제목에 금지 표현·이모지가 있나 — 사전은 이 파일 하나뿐이다. */
+export function subjectHasBanned(subject: string): boolean {
+  return SUBJECT_BANNED.test(subject) || SUBJECT_EMOJI.test(subject);
+}
+
 export function subjectHints(subject: string, preheader: string): string[] {
   const hints: string[] = [];
-  const len = [...subject.replaceAll("{회사명}", "")].length;
+  const len = subjectVisibleLength(subject);
   if (len > SUBJECT_SOFT_MAX) {
     hints.push(`제목이 ${len}자예요 — 휴대폰에서 25자 넘으면 잘려요. ${SUBJECT_SOFT_MAX}자 안이 좋아요`);
   }
-  if (SUBJECT_BANNED.test(subject) || SUBJECT_EMOJI.test(subject)) {
+  if (subjectHasBanned(subject)) {
     hints.push("금지 표현·이모지가 있어요(무료·긴급·지금 바로·마감 임박·느낌표 연속)");
   }
   if (!preheader.trim()) hints.push("미리보기 문구가 비었어요 — 본문 첫 줄이 그대로 보여요");
@@ -388,6 +403,42 @@ export function emailReady(s: EmailReadyState): boolean {
   if (s.adSentences.length > 0) return false;
   if (!s.factLock || !s.factLock.ok) return false;
   return s.fillMarkers.every((m) => (s.fillValues[m] ?? "").trim().length > 0);
+}
+
+/**
+ * 미리보기 응답이 실어 준 잠금 두 칸을 읽는다(2026-09-06 신설).
+ *
+ * ★「본문 고치기」로 본문을 바꾸면 convert 응답의 잠금은 **옛 본문을 판정한 값**이다.
+ *  그래서 서버가 미리보기 응답에도 같은 판정을 실어 주고(요청에 `originalText` 를 함께 보낸다),
+ *  화면은 미리보기를 새로 받을 때마다 이 함수로 읽어 convert 와 **같은 상태 변수**를 갱신한다.
+ * ★칸이 없거나 모양이 아니면 그 칸을 **아예 안 준다**(빈 손) — 부르는 쪽이 들고 있던 값을 그대로 둔다.
+ *  배포 교체 중 옛 서버에 걸린 한 번의 미리보기가 잠금을 지우거나 거꾸로 뒤집으면 안 된다.
+ */
+export interface PreviewLockUpdate {
+  factLock?: EmailFactLock;
+  adSentences?: string[];
+}
+
+/** 글자만 남긴다 — 「[object Object]」를 화면이 인용하지 않게. */
+function stringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+}
+
+export function previewLockUpdate(data: unknown): PreviewLockUpdate {
+  const out: PreviewLockUpdate = {};
+  if (!data || typeof data !== "object") return out;
+  const raw = data as { factLock?: unknown; adSentences?: unknown };
+  const lock = raw.factLock;
+  if (lock && typeof lock === "object") {
+    const { ok, missing, added } = lock as { ok?: unknown; missing?: unknown; added?: unknown };
+    // 판정(ok)이 참·거짓으로 오지 않으면 「모름」이다 — 통과로도 잠금으로도 위장하지 않는다.
+    if (typeof ok === "boolean") {
+      out.factLock = { ok, missing: stringList(missing), added: stringList(added) };
+    }
+  }
+  if (Array.isArray(raw.adSentences)) out.adSentences = stringList(raw.adSentences);
+  return out;
 }
 
 /** 첨부 총합이 상한 안인가. 올리기 **전에** 파일 크기로 먼저 재고, 올린 뒤에도 다시 잰다. */

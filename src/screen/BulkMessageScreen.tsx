@@ -371,6 +371,8 @@ export default function BulkMessageScreen() {
           setStopOpen={s.setStopOpen}
           stopping={s.stopping}
           stopJob={s.stopJob}
+          canRestart={s.canRestart}
+          restartSend={s.restartSend}
           sendStartedAt={s.sendStartedAt}
           sendFinishedAt={s.sendFinishedAt}
         />
@@ -386,6 +388,7 @@ export default function BulkMessageScreen() {
             q={s.historyQ}
             setQ={s.setHistoryQ}
             loadedQ={s.historyLoadedQ}
+            loadedMode={s.historyLoadedMode}
             jobs={s.historyJobs}
             companies={s.historyCompanies}
             view={s.historyView}

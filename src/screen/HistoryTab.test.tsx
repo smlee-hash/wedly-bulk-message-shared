@@ -110,6 +110,7 @@ function props(over: Partial<HistoryTabProps> = {}): HistoryTabProps {
     q: "",
     setQ: () => {},
     loadedQ: "",
+    loadedMode: "jobs",
     jobs: [job()],
     companies: [companyRow()],
     view: "list",
@@ -168,7 +169,20 @@ describe("머리·구간 단추·검색창", () => {
   it("건수는 지금 보는 보기의 것만 적는다", () => {
     expect(html).toContain("발송 1건");
     expect(html).not.toContain("사업장 1곳");
-    expect(draw({ mode: "companies" })).toContain("사업장 1곳");
+    expect(draw({ mode: "companies", loadedMode: "companies" })).toContain("사업장 1곳");
+  });
+
+  it("그 보기의 목록을 아직 안 읽었으면 건수를 안 적는다 — 「사업장 0곳」이 뜨면 안 된다", () => {
+    // 배포본 실측(2026-09-06): 발송 상세에서 「이 회사의 다른 발송 ›」로 뛰면 보기만 사업장별로
+    // 바뀌고 목록은 안 읽는다 — 그때 머리줄이 「사업장 0곳」이라고 거짓말했다.
+    const jumped = draw({ mode: "companies", companies: [], view: "company", loadedMode: "jobs" });
+    expect(jumped).not.toContain("사업장 0곳");
+    // 아예 「N곳」이라는 건수 문구 자체가 없어야 한다(「사업장 목록으로」 단추 글자는 건수가 아니다)
+    expect(jumped).not.toMatch(/사업장 [\d,]+곳/);
+    // 옛 보기의 숫자를 대신 적지도 않는다
+    expect(jumped).not.toContain("발송 1건");
+    // 목록을 읽기 전 보기를 바꾼 순간(사업장별 · 아직 응답 전)도 같다
+    expect(draw({ mode: "companies", companies: [], loadedMode: "jobs" })).not.toContain("사업장 0곳");
   });
 });
 

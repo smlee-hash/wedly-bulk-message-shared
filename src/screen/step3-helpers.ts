@@ -5,7 +5,13 @@ import type { EmailFactLock } from "../rules/email-body";
 // 같은 뜻을 두 모양으로 그리거나, 표와 발송 확인이 서로 다른 기준으로 환불을 세지 않게.
 import { emailMode, isRefunded, reasonCountsText, type BulkChannel } from "./step1-helpers";
 // 제목 규칙·첨부 상한은 2단계가 정본이다 — 여기에 다시 적으면 2단계는 조용한데 3단계만 빨개진다.
-import { attachmentTotalOk, subjectHints } from "./step2-helpers";
+import {
+  SUBJECT_HARD_MAX,
+  SUBJECT_SOFT_MAX,
+  attachmentTotalOk,
+  subjectHasBanned,
+  subjectVisibleLength,
+} from "./step2-helpers";
 export { NOTICE_CATEGORIES, isNoticeCategory } from "../rules/notice-category";
 export type { NoticeCategory } from "../rules/notice-category";
 
@@ -286,6 +292,13 @@ export function failureReasonOf(r: {
 export interface EmailChecklistItem {
   label: string;
   ok: boolean;
+  /**
+   * 통과이긴 한데 알려 둘 것이 있는 줄(2026-09-06 신설) — 노란 표시로 그린다.
+   * ★`ok` 는 그대로 참이다. 「보내기」도, 「미통과 N건」도 이 칸을 안 본다.
+   */
+  warn?: boolean;
+  /** 경고 줄에 함께 적는 한 마디. 경고가 아니면 없다. */
+  note?: string;
   goStep: 1 | 2 | 3;
 }
 
@@ -301,17 +314,29 @@ export interface EmailChecklistState {
   attachments: Array<{ bytes: number }>;
 }
 
-/**
- * 제목 규칙 검사에 넣는 **비어 있지 않은** 미리보기 문구.
- * `subjectHints` 는 미리보기 문구가 비면 한 줄을 더 내는데, 그 항목은 점검 목록의 둘째 줄이
- * 따로 세므로 여기서는 제목 쪽 규칙만 남긴다.
- */
-const PREHEADER_PRESENT = "미리보기 문구";
+/** 제목 점검 줄의 이름·경고 문구 — 화면이 글자를 따로 짓지 않게 여기 한 벌만 둔다. */
+export const SUBJECT_CHECK_LABEL = `제목 ${SUBJECT_HARD_MAX}자 안 · 금지 표현 없음`;
+export const SUBJECT_SOFT_OVER_NOTE = `권장 ${SUBJECT_SOFT_MAX}자를 넘어요 — 받은편지함에서 잘릴 수 있어요`;
 
-/** 제목이 규칙(22자·금지 표현·이모지)을 지키나 — 판정 사전은 2단계 노란 줄과 같은 것 하나뿐이다. */
+/**
+ * 제목 점검 — **막는 것과 알리는 것을 가른다**(2026-09-06 배포본 검사 반려 3).
+ *
+ * ★22자는 **권장**이고 서버 상한은 30자다. 예전에는 22자를 넘기면 「보내기」가 잠겨,
+ *  서버가 받아 주는 제목인데도 담당자가 못 보냈다.
+ * ★잠그는 것: 빈 제목 · 금지 표현·이모지 · 30자 초과. 알리기만 하는 것: 23~30자.
+ * ★판정 사전(글자 수 세는 법·금지 표현)은 2단계 노란 줄과 **같은 함수**를 쓴다.
+ */
+export function subjectCheck(subject: string): { ok: boolean; warn: boolean } {
+  if (!subject.trim()) return { ok: false, warn: false };
+  if (subjectHasBanned(subject)) return { ok: false, warn: false };
+  const len = subjectVisibleLength(subject);
+  if (len > SUBJECT_HARD_MAX) return { ok: false, warn: false };
+  return { ok: true, warn: len > SUBJECT_SOFT_MAX };
+}
+
+/** 제목이 보낼 수 있는 모양인가 — 권장(22자) 초과는 여기서 막지 않는다. */
 export function subjectRuleOk(subject: string): boolean {
-  if (!subject.trim()) return false;
-  return subjectHints(subject, PREHEADER_PRESENT).length === 0;
+  return subjectCheck(subject).ok;
 }
 
 /**
@@ -321,12 +346,21 @@ export function subjectRuleOk(subject: string): boolean {
  * ★뒤 넷 중 셋(깨진 링크·수신 설정 머리글·발신 도메인)은 늘 통과다. 본문에 들어가는 링크는
  *  첨부 보관함 링크뿐이라 변수가 낀 주소가 만들어지지 않고, 머리글·수신 설정 줄과 도메인 인증은
  *  서버(서식 렌더러·발송 통로)가 붙이는 것이라 화면이 끌 수 있는 값이 아니다.
+ * ★첫 줄(제목)만 **경고**를 낼 수 있다 — 23~30자는 통과(`ok`)에 노란 표시(`warn`)만 붙는다.
+ *  30자 초과·금지 표현·빈 제목만 잠근다(2026-09-06 배포본 검사 반려 3).
  */
 export function emailChecklist(s: EmailChecklistState): EmailChecklistItem[] {
   if (!emailMode(s.channel)) return [];
   const fillsDone = s.fillMarkers.every((m) => (s.fillValues[m] ?? "").trim().length > 0);
+  const subject = subjectCheck(s.subject);
   return [
-    { label: "제목 22자 안 · 금지 표현 없음", ok: subjectRuleOk(s.subject), goStep: 2 },
+    {
+      label: SUBJECT_CHECK_LABEL,
+      ok: subject.ok,
+      warn: subject.warn,
+      ...(subject.warn ? { note: SUBJECT_SOFT_OVER_NOTE } : {}),
+      goStep: 2,
+    },
     { label: "미리보기 문구 있음", ok: s.preheader.trim().length > 0, goStep: 2 },
     { label: "[확인 필요] 0개", ok: fillsDone, goStep: 2 },
     { label: "사실 잠금 통과 — 원문의 값이 정리본에 그대로", ok: !!s.factLock && s.factLock.ok, goStep: 2 },
@@ -473,6 +507,24 @@ export function sendRunning(job: {
   const chat = job.channelChat !== false && job.status === "running";
   const email = job.channelEmail === true && job.emailStatus === "running";
   return chat || email;
+}
+
+/**
+ * 「새 발송 시작」을 그릴 수 있나(2026-09-06 브라우저 QA 반려 7).
+ *
+ * ★발송이 시작되면 1·2·3단계 단추가 전부 잠긴다(`canGo` 가 작업 번호를 본다) — 끝난 뒤에도
+ *  잠긴 채라 같은 탭에서 새 발송을 시작할 길이 없었다. 새로고침해도 보관한 작업 번호가 남아 그대로다.
+ * ★**끝난 뒤에만** 그린다 — 보내는 도중에 처음으로 돌아갈 길을 주지 않는다(`sendRunning` 과 같은 판정).
+ * ★진행을 아직 못 받았으면(되살린 직후) 안 그린다 — 「모름」을 「끝남」으로 위장하지 않는다.
+ */
+export function canRestartSend(job: {
+  status?: string;
+  emailStatus?: string;
+  channelChat?: boolean;
+  channelEmail?: boolean;
+} | null | undefined): boolean {
+  if (!job || !job.status) return false;
+  return !sendRunning(job);
 }
 
 /**

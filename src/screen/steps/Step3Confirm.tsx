@@ -8,13 +8,14 @@
 //  발송이 시작되면 send() 가 모달을 먼저 닫으므로(useBulkState) 달아 두는 자리가 바뀌어도 같다.
 
 import { type ReactNode } from "react";
-import { Ban, Check, History, Mail, MessageCircle, RotateCcw, Send, Smartphone, X } from "lucide-react";
+import { AlertTriangle, Ban, Check, History, Mail, MessageCircle, RotateCcw, Send, Smartphone, X } from "lucide-react";
 import { ProgressBar, StatusBox } from "@wedly/ui-shared/ui";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import CustomSelect from "../../ui/CustomSelect";
 import { Modal } from "../../ui/Modal";
+import { cn } from "../../ui/cn";
 import type { EmailAttachment } from "../../rules/email-body";
 import { MAX_RECIPIENTS } from "../limits";
 import { LOADING_TARGETS_HINT, emailMode, type BulkChannel } from "../step1-helpers";
@@ -58,7 +59,9 @@ function KvTable({ rows }: { rows: Array<{ k: string; v: ReactNode }> }) {
 
 /**
  * 발송 전 점검 카드 — 아홉 줄. 빨간 줄에는 「2단계에서 고치기 ›」가 함께 선다.
- * ★색만으로 알리지 않는다 — 통과/미통과를 아이콘 모양(체크·엑스)과 글자로도 가른다.
+ * ★색만으로 알리지 않는다 — 통과/경고/미통과를 아이콘 모양(체크·경고·엑스)과 글자로도 가른다.
+ * ★경고(`warn`)는 **통과한 줄**이다(2026-09-06) — 「미통과 N건」에도 안 세고 「보내기」도 안 잠근다.
+ *  금색 타일 안 심볼은 남색이다(금색 위 흰 글리프는 대비 2.13:1 미달 — 상태 박스 v3 규칙 승계).
  */
 function ChecklistCard({
   items,
@@ -81,25 +84,28 @@ function ChecklistCard({
         </span>
       </div>
       <ul className="divide-y divide-wedly-bd/60 rounded-xl border border-wedly-bd/60 bg-wedly-bg-gray">
-        {items.map((it) => (
+        {items.map((it) => {
+          const warn = it.ok && it.warn === true;
+          return (
           <li key={it.label} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
             <span
-              className={
-                it.ok
-                  ? "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-wedly-green"
-                  : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-wedly-red"
-              }
+              className={cn(
+                "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
+                it.ok ? (warn ? "bg-wedly-gold" : "bg-wedly-green") : "bg-wedly-red",
+              )}
             >
-              {it.ok ? (
+              {warn ? (
+                <AlertTriangle className="h-[15px] w-[15px] text-wedly-navy" aria-hidden />
+              ) : it.ok ? (
                 <Check className="h-[15px] w-[15px] text-white" aria-hidden />
               ) : (
                 <X className="h-[15px] w-[15px] text-white" aria-hidden />
               )}
             </span>
-            <span className="sr-only">{it.ok ? "통과" : "미통과"}</span>
+            <span className="sr-only">{it.ok ? (warn ? "통과 · 확인해 주세요" : "통과") : "미통과"}</span>
             <span
               className={
-                it.ok
+                it.ok && !warn
                   ? "min-w-0 flex-1 text-wedly-sub text-wedly-t1 break-keep"
                   : "min-w-0 flex-1 text-wedly-sub font-semibold text-wedly-t1 break-keep"
               }
@@ -111,8 +117,14 @@ function ChecklistCard({
                 2단계에서 고치기 ›
               </Button>
             )}
+            {warn && it.note && (
+              <span className="basis-full text-wedly-hint font-semibold text-wedly-gold-ink break-keep">
+                {it.note}
+              </span>
+            )}
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );
@@ -170,6 +182,9 @@ export interface Step3ConfirmProps {
   stopJob: () => void;
   sendStartedAt: Date | null;
   sendFinishedAt: Date | null;
+  /** 끝난 발송인가 — 「새 발송 시작」을 그릴 조건(보내는 중에는 안 그린다). */
+  canRestart: boolean;
+  restartSend: () => void;
 }
 
 export function Step3Confirm({
@@ -217,6 +232,8 @@ export function Step3Confirm({
   stopJob,
   sendStartedAt,
   sendFinishedAt,
+  canRestart,
+  restartSend,
 }: Step3ConfirmProps) {
   // 「이메일 판을 그리나」는 한 곳에서만 정한다 — 자리마다 따로 판단하면 열은 없는데 값만 남는다.
   const emailShown = emailMode(channel);
@@ -745,6 +762,20 @@ export function Step3Confirm({
                   </table>
                 </div>
                 </>
+              )}
+
+              {/* ★끝난 뒤에만 — 같은 탭에서 새 발송을 시작할 길(2026-09-06 브라우저 QA 반려 7).
+                  발송이 시작되면 1·2·3단계 단추가 전부 잠기는데, 끝난 뒤에도 잠긴 채라 갇혔다. */}
+              {canRestart && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-wedly-bd pt-3">
+                  <Button variant="secondary" onClick={restartSend}>
+                    <RotateCcw className="h-[15px] w-[15px]" />
+                    새 발송 시작
+                  </Button>
+                  <span className="min-w-0 text-wedly-hint text-wedly-muted break-keep">
+                    이 화면만 처음으로 돌아가요 — 방금 보낸 내용은 「발송 기록」 탭에 그대로 남습니다.
+                  </span>
+                </div>
               )}
             </div>
           )}
