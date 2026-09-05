@@ -3,8 +3,8 @@
 // 단체 안내 발송 화면이 단계 파일에서 나눠 쓰는 작은 그림 부품.
 // 문구·클래스는 BulkMessageScreen 에서 옮긴 그대로다.
 
-import { type ComponentType, type ReactNode } from "react";
-import { AlertTriangle } from "lucide-react";
+import { useEffect, useRef, type ComponentType, type ReactNode } from "react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { Input } from "../ui/Input";
 import { cn } from "../ui/cn";
 import { FILL_MAX_LEN, needsFillLabel, clampFillValue } from "./step2-helpers";
@@ -161,5 +161,116 @@ export function LoadingStat() {
       />
       <span className="text-wedly-sub text-wedly-t2">불러오는 중…</span>
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────── 2단계 이메일용 조각
+
+/** 이메일 원문 칸의 변수 칩 — 채팅과 달리 담당 컨설턴트 이름도 넣을 수 있다(서버가 치환). */
+export const EMAIL_TOKEN_CHIPS = ["{대표명}", "{회사명}", "{담당 컨설턴트}"] as const;
+
+/** 파일 이름에서 확장자 딱지 — "임금대장_양식.xlsx" → "XLSX". */
+export function fileExtLabel(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  const ext = dot > 0 ? fileName.slice(dot + 1) : "";
+  return (ext || "파일").slice(0, 4).toUpperCase();
+}
+
+export function TokenChips({
+  tokens,
+  onInsert,
+}: {
+  tokens: readonly string[];
+  onInsert: (token: string) => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="text-wedly-hint font-semibold text-wedly-t2">눌러서 넣기</span>
+      {tokens.map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onInsert(v)}
+          aria-label={`${v} 넣기`}
+          className={cn(
+            "inline-flex min-h-10 sm:min-h-[28px] cursor-pointer items-center gap-1 rounded-full border border-wedly-bd bg-white px-2.5 py-1",
+            "text-wedly-hint font-semibold text-wedly-t1 shadow-sm",
+            "transition-colors duration-150 ease-out hover:border-wedly-accent/50 hover:bg-wedly-bg-page",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-wedly-accent focus-visible:ring-offset-2",
+          )}
+        >
+          <Plus className="h-3 w-3" aria-hidden />
+          {v}
+        </button>
+      ))}
+      <span className="text-wedly-hint text-wedly-muted break-keep">
+        대표님 이름·회사명이 수신자마다 자동으로 채워져요
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 눌러서 바로 고치는 글자(받은편지함 카드의 제목·미리보기 문구).
+ *
+ * ★값을 위에서 매번 다시 써 넣지 않는다 — contenteditable 에 글자를 넣으면 커서가 맨 앞으로 튄다.
+ *  치는 동안(포커스 중)에는 손대지 않고, 밖에서 값이 바뀐 때(다시 정리·새 변환)만 맞춘다.
+ * ★붙여넣기는 서식을 버리고 글자만 넣는다 — 굵기·색이 딸려 오면 제목 칸이 알록달록해진다.
+ * ★Enter 는 막는다 — 제목·미리보기 문구는 한 줄이다.
+ */
+export function EditableText({
+  value,
+  onChange,
+  ariaLabel,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof document !== "undefined" && document.activeElement === el) return;
+    if (el.textContent !== value) el.textContent = value;
+  }, [value]);
+
+  return (
+    <span
+      ref={ref}
+      role="textbox"
+      aria-label={ariaLabel}
+      aria-multiline={false}
+      tabIndex={0}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck={false}
+      onInput={(e) => onChange(e.currentTarget.textContent ?? "")}
+      onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+      onPaste={(e) => {
+        e.preventDefault();
+        const text = e.clipboardData.getData("text/plain").replace(/\s+/g, " ");
+        if (!text) return;
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) {
+          e.currentTarget.textContent = `${e.currentTarget.textContent ?? ""}${text}`;
+        } else {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(text));
+          sel.collapseToEnd();
+        }
+        onChange(e.currentTarget.textContent ?? "");
+      }}
+      className={cn(
+        "cursor-text border-b border-dashed border-wedly-bd-blue outline-none",
+        "transition-colors duration-150 ease-out hover:border-wedly-accent",
+        "focus-visible:rounded-[3px] focus-visible:ring-2 focus-visible:ring-wedly-accent",
+        className,
+      )}
+    />
   );
 }

@@ -1,15 +1,31 @@
 import { describe, expect, it } from "vitest";
+import { emptyEmailBody, type BulkEmailBody } from "../rules/email-body";
 import {
+  ATTACH_TOO_LARGE_NOTICE,
+  ATTACH_TOTAL_MAX_BYTES,
   CONVERT_DEBOUNCE_MS,
   CONVERT_INCOMPLETE_MESSAGE,
+  EMAIL_FROM_ADDRESS,
+  EMAIL_STEP2_NOTE,
+  EMAIL_SUBJECT_CHIP,
+  EMAIL_TEST_SEND_NOTE,
   FILL_MAX_LEN,
   MAX_COMPOSED_LEN,
   MIN_ORIGINAL_LEN,
+  PREVIEW_DEBOUNCE_MS,
   PREVIEW_EXAMPLE,
   allFillsComplete,
   applyFillValues,
+  applyFillsToBody,
+  applyInlineEdit,
   applyPreviewExamples,
+  attachmentTotalOk,
+  bodyToText,
   clampFillValue,
+  emailReady,
+  factLockNotice,
+  fileSizeLabel,
+  subjectHints,
   composedLengthNotice,
   composedTooLong,
   conversionReady,
@@ -352,5 +368,302 @@ describe("채우기 입력칸 — 첫 글자를 치는 순간 사라지지 않�
     expect(showFillForm({ conversionReady: false, editing: false, markerCount: 2 })).toBe(false);
     expect(showFillForm({ conversionReady: true, editing: true, markerCount: 2 })).toBe(false);
     expect(showFillForm({ conversionReady: true, editing: false, markerCount: 0 })).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// 2단계 이메일 모드 — 시안(2026-09-04-email-send-preview.html) §2단계와 1:1
+// ══════════════════════════════════════════════════════════════
+
+describe("subjectHints — 받은편지함 카드 밑 노란 줄", () => {
+  it("22자 안이고 미리보기 문구가 있으면 안내가 없다", () => {
+    expect(subjectHints("장려금 2차 서류 제출 안내", "4대보험 완납증명서·8월 임금대장 2종")).toEqual([]);
+  });
+
+  it("22자를 넘으면 글자 수를 넣어 알린다", () => {
+    const subject = "가".repeat(23);
+    expect(subjectHints(subject, "미리보기 문구")).toEqual([
+      "제목이 23자예요 — 휴대폰에서 25자 넘으면 잘려요. 22자 안이 좋아요",
+    ]);
+  });
+
+  it("길이는 {회사명} 변수를 뺀 글자로 센다 — 변수는 수신자 이름으로 바뀐다", () => {
+    // 「{회사명}」 6자가 그대로 세어지면 22자 안인 제목까지 길다고 잔소리한다.
+    expect(subjectHints("{회사명} 장려금 2차 서류 제출 안내", "미리보기 문구")).toEqual([]);
+  });
+
+  it("금지 표현·이모지를 한 줄로 알린다", () => {
+    const line = "금지 표현·이모지가 있어요(무료·긴급·지금 바로·마감 임박·느낌표 연속)";
+    expect(subjectHints("무료 상담 안내", "문구")).toEqual([line]);
+    expect(subjectHints("지금 바로 확인", "문구")).toEqual([line]);
+    expect(subjectHints("서류 제출 안내!!", "문구")).toEqual([line]);
+    expect(subjectHints("Re: 서류 제출", "문구")).toEqual([line]);
+    expect(subjectHints("서류 제출 안내 🎉", "문구")).toEqual([line]);
+  });
+
+  it("미리보기 문구가 비면 그것도 알린다", () => {
+    expect(subjectHints("서류 제출 안내", "   ")).toEqual([
+      "미리보기 문구가 비었어요 — 본문 첫 줄이 그대로 보여요",
+    ]);
+  });
+
+  it("여러 개면 길이 → 금지 표현 → 미리보기 문구 순서로 쌓인다", () => {
+    expect(subjectHints(`무료 ${"가".repeat(20)}`, "")).toHaveLength(3);
+  });
+});
+
+describe("bodyToText — 8구획을 한 덩어리 글로", () => {
+  const body: BulkEmailBody = {
+    ...emptyEmailBody(),
+    subject: "제목",
+    preheader: "미리보기 문구",
+    greeting: "안녕하세요, {대표명} 대표님.",
+    conclusion: "9월 12일까지 서류 2종을 보내 주세요.",
+    conclusion_sub: "기한이 지나면 다음 분기로 밀려요.",
+    facts: [{ label: "제출 기한", value: "9월 12일" }],
+    sections: [{ title: "제출 서류 2종", bullets: ["4대보험 완납증명서", "임금대장 8월분"] }],
+    action: { what: "서류 2종 회신", when: "9월 12일까지", how: "이 메일에 답장", button_label: "양식 내려받기" },
+    closing: "궁금한 점은 답장해 주세요.",
+  };
+
+  it("인사 → 결론 → 사실 표 → 소제목·불릿 → 다음 행동 → 맺음말 순서로 잇는다", () => {
+    expect(bodyToText(body)).toBe(
+      [
+        "안녕하세요, {대표명} 대표님.",
+        "9월 12일까지 서류 2종을 보내 주세요.",
+        "기한이 지나면 다음 분기로 밀려요.",
+        "제출 기한: 9월 12일",
+        "제출 서류 2종",
+        "- 4대보험 완납증명서",
+        "- 임금대장 8월분",
+        "서류 2종 회신",
+        "9월 12일까지",
+        "이 메일에 답장",
+        "양식 내려받기",
+        "궁금한 점은 답장해 주세요.",
+      ].join("\n"),
+    );
+  });
+
+  it("제목·미리보기 문구는 넣지 않는다 — 받은편지함 카드가 따로 들고 고친다", () => {
+    expect(bodyToText(body)).not.toContain("제목");
+    expect(bodyToText(body)).not.toContain("미리보기 문구");
+  });
+
+  it("빈 구획은 건너뛴다", () => {
+    expect(bodyToText(emptyEmailBody())).toBe("");
+  });
+
+  it("본문 어디에 있든 「확인 필요」 표식을 셀 수 있다", () => {
+    const withMark: BulkEmailBody = {
+      ...emptyEmailBody(),
+      conclusion: "9월 12일[확인 필요: 요일]까지",
+      sections: [{ title: "제출", bullets: ["금액 [확인 필요: 계약금]"] }],
+    };
+    expect(uniqueNeedsFill(bodyToText(withMark))).toEqual(["[확인 필요: 요일]", "[확인 필요: 계약금]"]);
+  });
+});
+
+describe("applyInlineEdit — 「본문 고치기」 패널이 구획을 되쓴다", () => {
+  const body: BulkEmailBody = {
+    ...emptyEmailBody(),
+    conclusion: "옛 결론",
+    conclusion_sub: "옛 보조",
+    closing: "옛 맺음말",
+    facts: [
+      { label: "제출 기한", value: "9월 12일" },
+      { label: "지급 기준", value: "1인당 월 60만원" },
+    ],
+    sections: [
+      { title: "제출 서류", bullets: ["첫 줄", "둘째 줄"] },
+      { title: "보내는 방법", bullets: ["답장"] },
+    ],
+    action: { what: "무엇", when: "언제", how: "어떻게", button_label: "버튼" },
+  };
+
+  it("결론·보조·맺음말을 고친다", () => {
+    expect(applyInlineEdit(body, "conclusion", "새 결론").conclusion).toBe("새 결론");
+    expect(applyInlineEdit(body, "conclusion_sub", "새 보조").conclusion_sub).toBe("새 보조");
+    expect(applyInlineEdit(body, "closing", "새 맺음말").closing).toBe("새 맺음말");
+  });
+
+  it("사실 표의 라벨·값을 각각 고친다", () => {
+    expect(applyInlineEdit(body, "facts[1].label", "지급액").facts[1].label).toBe("지급액");
+    expect(applyInlineEdit(body, "facts[0].value", "9월 15일").facts[0].value).toBe("9월 15일");
+    // 옆 줄은 건드리지 않는다
+    expect(applyInlineEdit(body, "facts[0].value", "9월 15일").facts[1]).toEqual(body.facts[1]);
+  });
+
+  it("소제목과 불릿을 고친다", () => {
+    expect(applyInlineEdit(body, "sections[1].title", "회신 방법").sections[1].title).toBe("회신 방법");
+    const edited = applyInlineEdit(body, "sections[0].bullets[1]", "고친 줄");
+    expect(edited.sections[0].bullets).toEqual(["첫 줄", "고친 줄"]);
+    expect(edited.sections[1]).toEqual(body.sections[1]);
+  });
+
+  it("다음 행동 네 칸을 고친다", () => {
+    expect(applyInlineEdit(body, "action.what", "A").action.what).toBe("A");
+    expect(applyInlineEdit(body, "action.when", "B").action.when).toBe("B");
+    expect(applyInlineEdit(body, "action.how", "C").action.how).toBe("C");
+    expect(applyInlineEdit(body, "action.button_label", "D").action.button_label).toBe("D");
+  });
+
+  it("원본을 고치지 않고 새 본문을 만든다", () => {
+    const next = applyInlineEdit(body, "conclusion", "새 결론");
+    expect(body.conclusion).toBe("옛 결론");
+    expect(next).not.toBe(body);
+  });
+
+  it("모르는 경로·범위 밖 번호는 본문을 그대로 돌려준다", () => {
+    expect(applyInlineEdit(body, "subject", "X")).toBe(body);
+    expect(applyInlineEdit(body, "facts[9].value", "X")).toBe(body);
+    expect(applyInlineEdit(body, "sections[0].bullets[9]", "X")).toBe(body);
+    expect(applyInlineEdit(body, "", "X")).toBe(body);
+  });
+});
+
+describe("applyFillsToBody — 채운 값을 구획 전체에 반영한다", () => {
+  it("모든 칸의 표식을 한 번에 바꾼다", () => {
+    const body: BulkEmailBody = {
+      ...emptyEmailBody(),
+      subject: "서류 제출 [확인 필요: 요일]",
+      conclusion: "9월 12일[확인 필요: 요일]까지",
+      facts: [{ label: "기한", value: "9월 12일[확인 필요: 요일]" }],
+      sections: [{ title: "[확인 필요: 요일] 안내", bullets: ["[확인 필요: 요일]"] }],
+      action: { what: "[확인 필요: 요일]", when: "", how: "", button_label: "" },
+      closing: "[확인 필요: 요일]",
+    };
+    const out = applyFillsToBody(body, { "[확인 필요: 요일]": "(금)" });
+    expect(out.subject).toBe("서류 제출 (금)");
+    expect(out.conclusion).toBe("9월 12일(금)까지");
+    expect(out.facts[0].value).toBe("9월 12일(금)");
+    expect(out.sections[0].title).toBe("(금) 안내");
+    expect(out.sections[0].bullets).toEqual(["(금)"]);
+    expect(out.action.what).toBe("(금)");
+    expect(out.closing).toBe("(금)");
+    expect(uniqueNeedsFill(bodyToText(out))).toEqual([]);
+  });
+
+  it("빈 값은 표식을 그대로 둔다 — 반쯤 채운 글이 나가지 않게", () => {
+    const body: BulkEmailBody = { ...emptyEmailBody(), conclusion: "[확인 필요: 요일]" };
+    expect(applyFillsToBody(body, { "[확인 필요: 요일]": "  " }).conclusion).toBe("[확인 필요: 요일]");
+  });
+});
+
+describe("emailReady — 「발송 확인으로」가 열리는 조건", () => {
+  const ok = {
+    subject: "장려금 2차 서류 제출 안내",
+    adSentences: [] as string[],
+    factLock: { missing: [], added: [], ok: true },
+    fillMarkers: [] as string[],
+    fillValues: {} as Record<string, string>,
+  };
+
+  it("제목 있음 · 광고 문장 0 · 사실 잠금 통과 · 채울 칸 없음이면 열린다", () => {
+    expect(emailReady(ok)).toBe(true);
+  });
+
+  it("제목이 비면 막는다", () => {
+    expect(emailReady({ ...ok, subject: "   " })).toBe(false);
+  });
+
+  it("광고로 읽히는 문장이 하나라도 있으면 막는다", () => {
+    expect(emailReady({ ...ok, adSentences: ["특별 혜택으로 추천드립니다."] })).toBe(false);
+  });
+
+  it("사실 잠금이 없거나(변환 전) 어긋나면 막는다", () => {
+    expect(emailReady({ ...ok, factLock: null })).toBe(false);
+    expect(emailReady({ ...ok, factLock: { missing: ["60만원"], added: [], ok: false } })).toBe(false);
+  });
+
+  it("채울 칸이 한 곳이라도 비면 막는다", () => {
+    const markers = ["[확인 필요: 요일]", "[확인 필요: 계약금]"];
+    expect(emailReady({ ...ok, fillMarkers: markers, fillValues: { "[확인 필요: 요일]": "금요일" } })).toBe(false);
+    expect(
+      emailReady({
+        ...ok,
+        fillMarkers: markers,
+        fillValues: { "[확인 필요: 요일]": "금요일", "[확인 필요: 계약금]": " " },
+      }),
+    ).toBe(false);
+    expect(
+      emailReady({
+        ...ok,
+        fillMarkers: markers,
+        fillValues: { "[확인 필요: 요일]": "금요일", "[확인 필요: 계약금]": "30만 원" },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("attachmentTotalOk — 첨부 총합 10MB", () => {
+  it("10MB 까지는 되고 1바이트만 넘어도 막는다", () => {
+    expect(ATTACH_TOTAL_MAX_BYTES).toBe(10 * 1024 * 1024);
+    expect(attachmentTotalOk([])).toBe(true);
+    expect(attachmentTotalOk([{ bytes: ATTACH_TOTAL_MAX_BYTES }])).toBe(true);
+    expect(attachmentTotalOk([{ bytes: ATTACH_TOTAL_MAX_BYTES + 1 }])).toBe(false);
+  });
+
+  it("여러 파일은 합쳐서 잰다", () => {
+    const half = 5 * 1024 * 1024;
+    expect(attachmentTotalOk([{ bytes: half }, { bytes: half }])).toBe(true);
+    expect(attachmentTotalOk([{ bytes: half }, { bytes: half }, { bytes: 1 }])).toBe(false);
+  });
+
+  it("거절 문구가 고정이다", () => {
+    expect(ATTACH_TOO_LARGE_NOTICE).toBe("첨부는 모두 합쳐 10MB까지예요 — 파일을 빼거나 줄여 주세요");
+  });
+});
+
+describe("fileSizeLabel", () => {
+  it("킬로바이트·메가바이트로 읽어 준다", () => {
+    expect(fileSizeLabel(0)).toBe("0KB");
+    expect(fileSizeLabel(248 * 1024)).toBe("248KB");
+    expect(fileSizeLabel(1.5 * 1024 * 1024)).toBe("1.5MB");
+  });
+});
+
+describe("factLockNotice — 사실 잠금 상자 문구", () => {
+  it("변환 전에는 상자를 그리지 않는다", () => {
+    expect(factLockNotice(null)).toBeNull();
+  });
+
+  it("통과면 초록 상자", () => {
+    expect(factLockNotice({ missing: [], added: [], ok: true })).toEqual({
+      tone: "success",
+      title: "원문의 숫자·서류 이름이 정리본에 그대로 있어요",
+      detail: "AI가 지어낸 값은 없어요.",
+    });
+  });
+
+  it("빠진 값이 있으면 빨강 상자에 그 값을 적는다", () => {
+    const n = factLockNotice({ missing: ["1인당 월 60만원"], added: [], ok: false });
+    expect(n?.tone).toBe("error");
+    expect(n?.title).toBe("정리본이 원문과 달라요 — 발송이 잠겼어요");
+    expect(n?.detail).toContain("빠진 값: 1인당 월 60만원");
+  });
+
+  it("원문에 없던 값이 생겨도 빨강으로 잡는다", () => {
+    const n = factLockNotice({ missing: [], added: ["9월 15일"], ok: false });
+    expect(n?.detail).toContain("원문에 없는 값: 9월 15일");
+  });
+});
+
+describe("이메일 2단계 고정 문구", () => {
+  it("미리보기 디바운스는 0.3초 — 원문 변환(0.7초)보다 짧다", () => {
+    expect(PREVIEW_DEBOUNCE_MS).toBe(300);
+    expect(PREVIEW_DEBOUNCE_MS).toBeLessThan(CONVERT_DEBOUNCE_MS);
+  });
+
+  it("발신 주소·제목 앞머리는 고정이다", () => {
+    expect(EMAIL_FROM_ADDRESS).toBe("consulting@wedly.kr");
+    expect(EMAIL_SUBJECT_CHIP).toBe("[WEDLY]");
+  });
+
+  it("다음 단계 안내·시험 발송 안내가 시안 글자 그대로다", () => {
+    expect(EMAIL_STEP2_NOTE).toBe("[확인 필요]가 다 채워지고 광고 표현이 없어야 다음으로 갈 수 있어요");
+    expect(EMAIL_TEST_SEND_NOTE).toBe(
+      "시험 발송에는 개인화 값이 들어가지 않아요 — 변수 확인은 「실제 수신자로 보기」로",
+    );
   });
 });

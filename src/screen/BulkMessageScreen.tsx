@@ -16,6 +16,7 @@ import { BulkMessageManual } from "./BulkMessageManual";
 import { useBulkState, type Step } from "./useBulkState";
 import { Step1Targets } from "./steps/Step1Targets";
 import { Step2Chat } from "./steps/Step2Chat";
+import { Step2Email } from "./steps/Step2Email";
 import { Step3Confirm } from "./steps/Step3Confirm";
 
 // ────────────────────────────────────────────────────────────── 단계 표시
@@ -207,8 +208,60 @@ export default function BulkMessageScreen() {
       )}
 
       {/* ══════════ 02 안내문 만들기 ══════════ */}
-      {s.step === 2 && (
+      {/* 이메일 판이 위, 채팅 판이 아래 — 「둘 다」면 둘 다 그리고 원문 칸은 이메일 판 하나만 둔다. */}
+      {s.step === 2 && s.channel !== "chat" && (
+        <Step2Email
+          originalRef={s.originalRef}
+          originalText={s.originalText}
+          setOriginalText={s.setOriginalText}
+          insertToken={s.insertToken}
+          myName={s.myName}
+          emailBody={s.emailBody}
+          emailSubject={s.emailSubject}
+          setEmailSubject={s.setEmailSubject}
+          emailPreheader={s.emailPreheader}
+          setEmailPreheader={s.setEmailPreheader}
+          emailWarnings={s.emailWarnings}
+          adSentences={s.adSentences}
+          factLock={s.factLock}
+          emailFilled={s.emailFilled}
+          setEmailFilled={s.setEmailFilled}
+          emailFillMarkers={s.emailFillMarkers}
+          emailConverting={s.emailConverting}
+          emailError={s.emailError}
+          convertEmail={s.convertEmail}
+          editEmailBody={s.editEmailBody}
+          emailAttachments={s.emailAttachments}
+          addAttachments={s.addAttachments}
+          removeAttachment={s.removeAttachment}
+          attachError={s.attachError}
+          attachUploading={s.attachUploading}
+          previewHtml={s.previewHtml}
+          previewLoading={s.previewLoading}
+          previewError={s.previewError}
+          previewDevice={s.previewDevice}
+          setPreviewDevice={s.setPreviewDevice}
+          previewReal={s.previewReal}
+          setPreviewReal={s.setPreviewReal}
+          previewRecipient={s.previewRecipient}
+          emailPreviewTargetCount={s.emailPreviewTargets.length}
+          nextPreviewRecipient={s.nextPreviewRecipient}
+          testSendEmail={s.testSendEmail}
+          emailTestSending={s.emailTestSending}
+          emailTestDone={s.emailTestDone}
+          emailTestError={s.emailTestError}
+          showFooter={s.channel === "email"}
+          channelBoth={s.channel === "both"}
+          goStep={s.goStep}
+          canGo={s.canGo}
+          step2Hint={s.step2Hint}
+        />
+      )}
+
+      {s.step === 2 && s.channel !== "email" && (
+        <div className={s.channel === "both" ? "mt-4" : undefined}>
         <Step2Chat
+          hideOriginal={s.channel === "both"}
           originalRef={s.originalRef}
           originalText={s.originalText}
           setOriginalText={s.setOriginalText}
@@ -248,6 +301,7 @@ export default function BulkMessageScreen() {
           noticeCategoryPicked={s.noticeCategoryPicked}
           testNoticeCategoryLabel={s.testNoticeCategoryLabel}
         />
+        </div>
       )}
 
       {/* ══════════ 03 발송 확인 ══════════ */}

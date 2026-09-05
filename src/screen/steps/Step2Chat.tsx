@@ -63,6 +63,12 @@ export interface Step2ChatProps {
   pricing: BulkPricing;
   noticeCategoryPicked: string;
   testNoticeCategoryLabel: string;
+  /**
+   * 원문 칸을 이 판에서 감출지 — 「둘 다」일 때 위 이메일 판이 원문 칸 하나를 맡는다.
+   * ★상태(originalText)는 그대로 함께 쓴다. 칸만 한 곳에 둔다(원문이 두 칸이면 어느 쪽이
+   *  진짜인지 알 수 없고, 같은 ref 를 두 칸이 다투게 된다).
+   */
+  hideOriginal?: boolean;
 }
 
 export function Step2Chat({
@@ -104,6 +110,7 @@ export function Step2Chat({
   pricing,
   noticeCategoryPicked,
   testNoticeCategoryLabel,
+  hideOriginal,
 }: Step2ChatProps) {
   return (
     <>
@@ -112,12 +119,17 @@ export function Step2Chat({
             no="02"
             tone="purple"
             icon={MessageSquare}
-            title="안내문 만들기"
-            desc="적고 잠시 멈추면 AI가 위들리 형식으로 바꿔 줘요"
+            title={hideOriginal ? "안내문 만들기 — 카카오 채팅" : "안내문 만들기"}
+            desc={
+              hideOriginal
+                ? "위 원문으로 채팅용 안내문도 함께 만들어져요"
+                : "적고 잠시 멈추면 AI가 위들리 형식으로 바꿔 줘요"
+            }
           />
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* 왼쪽 — 원문 */}
+          <div className={cn("grid grid-cols-1 gap-4", !hideOriginal && "lg:grid-cols-2")}>
+            {/* 왼쪽 — 원문. 「둘 다」면 위 이메일 판이 이 칸을 맡는다(상태는 함께 쓴다). */}
+            {!hideOriginal && (
             <div className="min-w-0">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="text-wedly-sub font-semibold text-wedly-t1">보내고 싶은 내용 (원문)</span>
@@ -166,6 +178,7 @@ export function Step2Chat({
                 {originalText.length}/4,000
               </p>
             </div>
+            )}
 
             {/* 오른쪽 — 변환 결과 */}
             <div className="min-w-0">

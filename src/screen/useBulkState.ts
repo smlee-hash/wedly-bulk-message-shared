@@ -12,6 +12,12 @@ import {
   useState,
 } from "react";
 import { detectAdWords } from "../rules/checks";
+import type {
+  BulkEmailBody,
+  ConvertEmailData,
+  EmailAttachment,
+  EmailFactLock,
+} from "../rules/email-body";
 import { MAX_RECIPIENTS } from "./limits";
 import {
   MANAGER_MINE,
@@ -40,15 +46,23 @@ import {
   type PickedDrop,
 } from "./step1-helpers";
 import {
+  ATTACH_TOO_LARGE_NOTICE,
   CONVERT_DEBOUNCE_MS,
   CONVERT_INCOMPLETE_MESSAGE,
+  EMAIL_STEP2_NOTE,
   MIN_ORIGINAL_LEN,
+  PREVIEW_DEBOUNCE_MS,
   allFillsComplete,
   applyFillValues,
+  applyFillsToBody,
+  applyInlineEdit,
+  attachmentTotalOk,
+  bodyToText,
   composedLengthNotice,
   composedTooLong,
   conversionReady,
   convertApiErrorMessage,
+  emailReady,
   insertAtCursor,
   isAbortError,
   readPlainTextStream,
@@ -638,6 +652,8 @@ export function useBulkState() {
 
   useEffect(() => {
     if (step !== 2) return;
+    // ★통로가 「이메일」뿐이면 채팅 안내문은 만들지 않는다 — 안 쓸 글을 만드느라 유료 호출이 나간다.
+    if (channel === "email") return;
     if (!shouldAutoConvert(originalText, lastConvertedOriginal)) return;
     debounceTimerRef.current = setTimeout(() => { void convert(); }, CONVERT_DEBOUNCE_MS);
     return () => {
@@ -648,7 +664,7 @@ export function useBulkState() {
       // 원문이 바뀌면 진행 중 변환을 바로 취소한다 — 다음 디바운스까지 기다리면 유료 호출이 겹친다.
       convertAbortRef.current?.abort();
     };
-  }, [step, originalText, lastConvertedOriginal, convert]);
+  }, [step, channel, originalText, lastConvertedOriginal, convert]);
 
   useLayoutEffect(() => {
     const cursor = pendingCursor.current;
@@ -728,6 +744,280 @@ export function useBulkState() {
     }
   }, [composedText, testPhone, noticeCategory]);
 
+  // ── 2단계: 이메일 ────────────────────────────────────────────
+  // 채팅 쪽(finalText)과 **원문 한 칸을 함께 쓰고** 결과만 따로 든다.
+  // 이메일은 글 한 덩어리가 아니라 8구획 JSON 이라, 미리보기 HTML 은 서버(렌더러 한 곳)가 그린다.
+  const [emailBody, setEmailBody] = useState<BulkEmailBody | null>(null);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailPreheader, setEmailPreheader] = useState("");
+  /** 서버가 「소제목 4개까지만 남겼어요」처럼 손본 것을 알려 준 줄. */
+  const [emailWarnings, setEmailWarnings] = useState<string[]>([]);
+  /** 광고로 읽히는 문장 — 하나라도 있으면 다음 단계가 잠긴다. */
+  const [adSentences, setAdSentences] = useState<string[]>([]);
+  const [factLock, setFactLock] = useState<EmailFactLock | null>(null);
+  const [emailFilled, setEmailFilled] = useState<Record<string, string>>({});
+  const [emailAttachments, setEmailAttachments] = useState<EmailAttachment[]>([]);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
+  const [previewReal, setPreviewReal] = useState(false);
+  const [previewIdx, setPreviewIdx] = useState(0);
+  const [emailConverting, setEmailConverting] = useState(false);
+  /** 변환 실패 안내 — 브라우저 alert 금지. 이 판 안의 빨간 상자로만 보인다. */
+  const [emailError, setEmailError] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [attachError, setAttachError] = useState("");
+  const [attachUploading, setAttachUploading] = useState(false);
+  const [lastEmailOriginal, setLastEmailOriginal] = useState("");
+  const [emailTestSending, setEmailTestSending] = useState(false);
+  const [emailTestDone, setEmailTestDone] = useState("");
+  const [emailTestError, setEmailTestError] = useState("");
+
+  const lastEmailRef = useRef(lastEmailOriginal);
+  lastEmailRef.current = lastEmailOriginal;
+  const emailGen = useRef(0);
+  const emailAbortRef = useRef<AbortController | null>(null);
+  const emailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewGen = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
+
+  const convertEmail = useCallback(async (opts?: { force?: boolean }) => {
+    if (emailDebounceRef.current) {
+      clearTimeout(emailDebounceRef.current);
+      emailDebounceRef.current = null;
+    }
+    const text = originalTextRef.current.trim();
+    if (text.length < MIN_ORIGINAL_LEN) return;
+    if (!opts?.force && !shouldAutoConvert(text, lastEmailRef.current)) return;
+    emailAbortRef.current?.abort();
+    const ac = new AbortController();
+    emailAbortRef.current = ac;
+    const gen = ++emailGen.current;
+    setEmailConverting(true);
+    setEmailError("");
+    try {
+      const res = await fetch("/api/bulk-message/convert-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ originalText: text }),
+        signal: ac.signal,
+      });
+      const payload = await res.json().catch(() => null);
+      if (ac.signal.aborted || gen !== emailGen.current) return;
+      const p = payload as { success?: unknown; data?: Partial<ConvertEmailData> } | null;
+      const body = p?.data?.body;
+      if (!res.ok || p?.success !== true || !body) throw new Error(convertApiErrorMessage(payload));
+      // 타이핑이 이어졌으면 이 응답은 버린다 — 옛 원문으로 만든 안내문이 남지 않게.
+      if (text !== originalTextRef.current.trim()) return;
+      setEmailBody(body);
+      setEmailSubject(body.subject ?? "");
+      setEmailPreheader(body.preheader ?? "");
+      setEmailWarnings(p.data?.warnings ?? []);
+      setAdSentences(p.data?.adSentences ?? []);
+      setFactLock(p.data?.factLock ?? null);
+      setEmailFilled({});
+      lastEmailRef.current = text;
+      setLastEmailOriginal(text);
+    } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (gen !== emailGen.current) return;
+      setEmailError(loadErrorText(e, "잠시 후 다시 시도해 주세요."));
+    } finally {
+      if (gen === emailGen.current) setEmailConverting(false);
+    }
+  }, []);
+
+  useEffect(() => () => {
+    emailAbortRef.current?.abort();
+    previewAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    if (!emailMode(channel)) return;
+    if (!shouldAutoConvert(originalText, lastEmailOriginal)) return;
+    emailDebounceRef.current = setTimeout(() => { void convertEmail(); }, CONVERT_DEBOUNCE_MS);
+    return () => {
+      if (emailDebounceRef.current) {
+        clearTimeout(emailDebounceRef.current);
+        emailDebounceRef.current = null;
+      }
+      emailAbortRef.current?.abort();
+    };
+  }, [step, channel, originalText, lastEmailOriginal, convertEmail]);
+
+  /** 본문 어디에 있든 남은 「확인 필요」 표식 — 제목·미리보기 문구까지 함께 센다. */
+  const emailFillMarkers = useMemo(() => {
+    if (!emailBody) return [] as string[];
+    return uniqueNeedsFill([emailSubject, emailPreheader, bodyToText(emailBody)].join("\n"));
+  }, [emailBody, emailSubject, emailPreheader]);
+
+  /**
+   * 실제로 나갈 본문 — 카드에서 고친 제목·미리보기 문구를 얹고 채운 값까지 반영한 것.
+   * ★미리보기·시험 발송·실제 발송이 **모두 이 하나**를 쓴다. 한 곳만 원본을 쓰면
+   *  고객이 「[확인 필요: 요일]」을 그대로 받는다.
+   */
+  const emailComposedBody = useMemo(() => {
+    if (!emailBody) return null;
+    return applyFillsToBody({ ...emailBody, subject: emailSubject, preheader: emailPreheader }, emailFilled);
+  }, [emailBody, emailSubject, emailPreheader, emailFilled]);
+
+  /** 「실제 수신자로 보기」가 도는 명단 — 고른 사람 중 이메일이 있는 분. */
+  const emailPreviewTargets = useMemo(() => selected.filter((t) => t.emailSendable), [selected]);
+  const previewRecipient = useMemo(() => {
+    if (!previewReal || emailPreviewTargets.length === 0) return null;
+    return emailPreviewTargets[previewIdx % emailPreviewTargets.length];
+  }, [previewReal, previewIdx, emailPreviewTargets]);
+
+  const requestPreview = useCallback(async () => {
+    const body = emailComposedBody;
+    if (!body) return;
+    previewAbortRef.current?.abort();
+    const ac = new AbortController();
+    previewAbortRef.current = ac;
+    const gen = ++previewGen.current;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const res = await fetch("/api/bulk-message/preview-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          body,
+          ...(previewRecipient
+            ? {
+                recipient: {
+                  representative: previewRecipient.representative,
+                  companyName: previewRecipient.companyName,
+                },
+              }
+            : {}),
+          ...(emailAttachments.length ? { attachments: emailAttachments } : {}),
+        }),
+        signal: ac.signal,
+      });
+      const payload = await res.json().catch(() => null);
+      if (ac.signal.aborted || gen !== previewGen.current) return;
+      const p = payload as { success?: unknown; data?: { html?: unknown } } | null;
+      const html = p?.data?.html;
+      if (!res.ok || p?.success !== true || typeof html !== "string") {
+        throw new Error(convertApiErrorMessage(payload, "미리보기를 불러오지 못했어요."));
+      }
+      setPreviewHtml(html);
+    } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (gen !== previewGen.current) return;
+      setPreviewError(loadErrorText(e, "미리보기를 불러오지 못했어요."));
+    } finally {
+      if (gen === previewGen.current) setPreviewLoading(false);
+    }
+  }, [emailComposedBody, previewRecipient, emailAttachments]);
+
+  useEffect(() => {
+    if (step !== 2 || !emailMode(channel)) return;
+    if (!emailComposedBody) {
+      setPreviewHtml("");
+      return;
+    }
+    // 기기를 바꿔도 다시 부른다 — 폭에 따라 서식이 달라질 수 있어 화면이 짐작하지 않는다.
+    const timer = setTimeout(() => { void requestPreview(); }, PREVIEW_DEBOUNCE_MS);
+    return () => { clearTimeout(timer); };
+  }, [step, channel, emailComposedBody, previewDevice, requestPreview]);
+
+  /** 고른 사람이 줄면 「다음 수신자」 번호가 명단 밖으로 나가지 않게 되돌린다. */
+  useEffect(() => {
+    if (previewIdx !== 0 && previewIdx >= emailPreviewTargets.length) setPreviewIdx(0);
+  }, [previewIdx, emailPreviewTargets.length]);
+
+  const nextPreviewRecipient = useCallback(() => {
+    setPreviewIdx((i) => (emailPreviewTargets.length ? (i + 1) % emailPreviewTargets.length : 0));
+  }, [emailPreviewTargets.length]);
+
+  const editEmailBody = useCallback((path: string, value: string) => {
+    setEmailBody((prev) => (prev ? applyInlineEdit(prev, path, value) : prev));
+  }, []);
+
+  const addAttachments = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setAttachError("");
+    // 올리기 **전에** 먼저 잰다 — 10MB 를 넘길 파일을 서버까지 보내지 않는다.
+    if (!attachmentTotalOk([...emailAttachments, ...files.map((f) => ({ bytes: f.size }))])) {
+      setAttachError(ATTACH_TOO_LARGE_NOTICE);
+      return;
+    }
+    setAttachUploading(true);
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: form });
+        const payload = await res.json().catch(() => null);
+        const p = payload as
+          | { success?: unknown; data?: { id?: unknown; fileName?: unknown; size?: unknown } }
+          | null;
+        const id = p?.data?.id;
+        if (!res.ok || p?.success !== true || typeof id !== "string" || !id) {
+          throw new Error(convertApiErrorMessage(payload, "파일을 올리지 못했어요."));
+        }
+        const added: EmailAttachment = {
+          uploadId: id,
+          fileName: typeof p.data?.fileName === "string" ? p.data.fileName : file.name,
+          bytes: Number(p.data?.size ?? file.size) || 0,
+        };
+        // 올리는 사이에 다른 파일이 늘었을 수 있으니 넣기 직전에 한 번 더 잰다.
+        let rejected = false;
+        setEmailAttachments((prev) => {
+          if (!attachmentTotalOk([...prev, added])) { rejected = true; return prev; }
+          return [...prev, added];
+        });
+        if (rejected) { setAttachError(ATTACH_TOO_LARGE_NOTICE); break; }
+      }
+    } catch (e) {
+      setAttachError(loadErrorText(e, "파일을 올리지 못했어요."));
+    } finally {
+      setAttachUploading(false);
+    }
+  }, [emailAttachments]);
+
+  const removeAttachment = useCallback((uploadId: string) => {
+    setEmailAttachments((prev) => prev.filter((a) => a.uploadId !== uploadId));
+    setAttachError("");
+  }, []);
+
+  const testSendEmail = useCallback(async () => {
+    if (!emailComposedBody) return;
+    setEmailTestSending(true);
+    setEmailTestDone("");
+    setEmailTestError("");
+    try {
+      const res = await fetch("/api/bulk-message/test-send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: emailComposedBody.subject,
+          preheader: emailComposedBody.preheader,
+          bodyJson: emailComposedBody,
+          attachments: emailAttachments,
+        }),
+      });
+      const j = await res.json();
+      if (!j.success) throw new Error(j.error);
+      setEmailTestDone("보냈어요. 내 메일함을 확인해 주세요.");
+    } catch (e) {
+      setEmailTestError(loadErrorText(e, "잠시 후 다시 시도해 주세요."));
+    } finally {
+      setEmailTestSending(false);
+    }
+  }, [emailComposedBody, emailAttachments]);
+
+  const emailStepReady = emailReady({
+    subject: emailSubject,
+    adSentences,
+    factLock,
+    fillMarkers: emailFillMarkers,
+    fillValues: emailFilled,
+  });
+
   // ── 3단계: 발송 ─────────────────────────────────────────────
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
@@ -796,6 +1086,21 @@ export function useBulkState() {
           noticeCategory,
           // 어떤 통로로 보낼지 — 서버는 이 값이 없으면 옛 화면으로 보고 알림톡·채팅만 보낸다.
           channels: { chat: channel !== "email", email: emailMode(channel) },
+          // ★이메일 몸통은 **채운 값까지 반영한** 본문을 싣는다(emailComposedBody).
+          //  표식이 남은 원본을 실어 보내고 서버가 채워 주기를 바라지 않는다 —
+          //  서버가 안 채우면 고객이 「[확인 필요: 요일]」을 그대로 받는다.
+          //  filledValues 는 서버 사실 잠금 재검사·기록용으로 함께 보낸다.
+          ...(emailMode(channel) && emailComposedBody
+            ? {
+                email: {
+                  subject: emailComposedBody.subject,
+                  preheader: emailComposedBody.preheader,
+                  bodyJson: emailComposedBody,
+                  filledValues: emailFilled,
+                  attachments: emailAttachments,
+                },
+              }
+            : {}),
         }),
       });
       const j = await res.json();
@@ -829,7 +1134,7 @@ export function useBulkState() {
     } finally {
       setSending(false);
     }
-  }, [selected, originalText, composedText, noticeCategory, channel, manualEmails, alertError, loadingTargets, loadError]);
+  }, [selected, originalText, composedText, noticeCategory, channel, manualEmails, alertError, loadingTargets, loadError, emailComposedBody, emailFilled, emailAttachments]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -917,19 +1222,30 @@ export function useBulkState() {
    */
   const refundedInSelection = useMemo(() => refundedNotice(selected), [selected]);
   const listPhase = step1ListPhase({ loading: loadingTargets, loadError });
-  const step2Hint = step2FooterHint({
-    tooLong,
-    composedLength: composedText.length,
-    conversionReady: step2ConversionReady,
-    remainingFillCount: remainingMarkers.length,
-  });
+  /**
+   * 채팅 쪽 2단계가 끝났나 — **통로가 「이메일」뿐이면 볼 것이 없다**(채팅 안내문을 만들지 않는다).
+   * 이걸 안 가르면 이메일만 보내려는 담당자가 3단계로 영영 못 간다.
+   */
+  const chatStepReady =
+    channel === "email" || (step2ConversionReady && remainingMarkers.length === 0 && !tooLong);
+  const chatHint =
+    channel === "email"
+      ? ""
+      : step2FooterHint({
+          tooLong,
+          composedLength: composedText.length,
+          conversionReady: step2ConversionReady,
+          remainingFillCount: remainingMarkers.length,
+        });
+  const emailStepBlocking = emailMode(channel) && !emailStepReady;
+  const step2Hint = chatHint || (emailStepBlocking ? EMAIL_STEP2_NOTE : "");
   const canGo = useCallback(
     (s: Step) => {
       if (s === 1) return !jobId; // 발송을 시작하면 대상을 바꿀 수 없다
       if (s === 2) return targetsOk && !jobId;
-      return step2ConversionReady && remainingMarkers.length === 0 && targetsOk && !tooLong;
+      return chatStepReady && !emailStepBlocking && targetsOk;
     },
-    [targetsOk, step2ConversionReady, remainingMarkers, jobId, tooLong],
+    [targetsOk, chatStepReady, emailStepBlocking, jobId],
   );
 
   const goStep = useCallback(
@@ -940,14 +1256,18 @@ export function useBulkState() {
         else if (loadError) alertError("대상을 다시 불러온 뒤에 진행해 주세요.");
         else alertError("받을 분을 한 명 이상 골라 주세요.");
       } else if (s === 3) {
-        if (!step2ConversionReady) alertError("안내문을 먼저 만들어 주세요.");
+        if (channel === "email") {
+          if (emailStepBlocking) alertError(EMAIL_STEP2_NOTE);
+          else alertError("받을 분을 한 명 이상 골라 주세요.");
+        } else if (!step2ConversionReady) alertError("안내문을 먼저 만들어 주세요.");
         else if (remainingMarkers.length) alertError(`「확인 필요」 표시 ${remainingMarkers.length}곳을 먼저 채워 주세요.`);
         else if (tooLong) alertError(composedLengthNotice(composedText.length));
+        else if (emailStepBlocking) alertError(EMAIL_STEP2_NOTE);
         else if (!targetsOk) alertError("받을 분을 한 명 이상 골라 주세요.");
         else alertError("받을 분을 한 명 이상 골라 주세요.");
       } else alertError("발송을 시작한 뒤에는 받을 분을 바꿀 수 없어요.");
     },
-    [canGo, step2ConversionReady, remainingMarkers, alertError, loadingTargets, loadError, tooLong, composedText.length, targetsOk],
+    [canGo, channel, step2ConversionReady, remainingMarkers, alertError, loadingTargets, loadError, tooLong, composedText.length, targetsOk, emailStepBlocking],
   );
   // ── 그리기 ──────────────────────────────────────────────────
   const noticeCategoryOptions = useMemo(
@@ -1043,6 +1363,42 @@ export function useBulkState() {
     testError,
     setTestError,
     testSend,
+    // 2단계 이메일
+    emailBody,
+    emailSubject,
+    setEmailSubject,
+    emailPreheader,
+    setEmailPreheader,
+    emailWarnings,
+    adSentences,
+    factLock,
+    emailFilled,
+    setEmailFilled,
+    emailFillMarkers,
+    emailAttachments,
+    addAttachments,
+    removeAttachment,
+    attachError,
+    attachUploading,
+    previewHtml,
+    previewLoading,
+    previewError,
+    previewDevice,
+    setPreviewDevice,
+    previewReal,
+    setPreviewReal,
+    previewRecipient,
+    emailPreviewTargets,
+    nextPreviewRecipient,
+    emailConverting,
+    emailError,
+    convertEmail,
+    editEmailBody,
+    emailStepReady,
+    testSendEmail,
+    emailTestSending,
+    emailTestDone,
+    emailTestError,
     noticeCategory,
     setNoticeCategory,
     noticeCategoryOptions,
