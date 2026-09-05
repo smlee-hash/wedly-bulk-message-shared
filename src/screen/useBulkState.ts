@@ -73,6 +73,14 @@ import {
   uniqueNeedsFill,
 } from "./step2-helpers";
 import {
+  HISTORY_DEBOUNCE_MS,
+  HISTORY_JOB_FORBIDDEN,
+  type HistoryCompanyDetail,
+  type HistoryCompanyRow,
+  type HistoryJobRow,
+  type HistoryMode,
+} from "./history-helpers";
+import {
   DEFAULT_NOTICE_CATEGORY_LABEL,
   DEFAULT_PRICING,
   JOB_GONE_NOTICE,
@@ -1322,6 +1330,157 @@ export function useBulkState() {
     }
   }, [jobId, alertError]);
 
+  // ── 발송 기록 탭 ─────────────────────────────────────────────
+  //
+  // 「발송하기」와 완전히 따로 도는 판이다 — 여기 상태는 발송 상태를 건드리지 않는다.
+  // ★탭을 열기 전에는 아무것도 안 부른다(`historyActive`). 화면을 띄우기만 해도 조회가 나가면
+  //  이메일을 안 쓰는 담당자에게도 매번 수신자 표를 훑게 한다.
+  const [historyActive, setHistoryActive] = useState(false);
+  const [historyMode, setHistoryMode] = useState<HistoryMode>("jobs");
+  const [historyQ, setHistoryQ] = useState("");
+  const [historyJobs, setHistoryJobs] = useState<HistoryJobRow[]>([]);
+  const [historyCompanies, setHistoryCompanies] = useState<HistoryCompanyRow[]>([]);
+  /**
+   * 지금 목록이 **답하고 있는** 검색어. `historyQ` 와 다르면 아직 응답 전이라는 뜻이라,
+   * 화면이 그 동안만 옛 목록을 스스로 좁혀 보여 준다(filterJobs).
+   * ★응답이 도착한 뒤에는 서버 결과를 그대로 믿는다 — 수신자 이름으로 걸린 발송은
+   *  목록 줄에 회사 이름이 없어 화면이 다시 거르면 **맞는 결과가 사라진다.**
+   */
+  const [historyLoadedQ, setHistoryLoadedQ] = useState("");
+  /** 지금 무엇을 보고 있나 — 목록 / 발송 상세 / 회사 상세. */
+  const [historyView, setHistoryView] = useState<"list" | "job" | "company">("list");
+  const [historyJob, setHistoryJob] = useState<HistoryJobRow | null>(null);
+  /** 고른 발송의 수신자별 신호 — `GET jobs/[id]` 응답(3단계 현황 표와 같은 줄). */
+  const [historyJobRecipients, setHistoryJobRecipients] = useState<RecipientRow[]>([]);
+  const [historyCompany, setHistoryCompany] = useState<HistoryCompanyDetail | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  /** 늦게 온 응답이 새 요청 결과를 덮지 않게 세는 번호(1단계 목록 조회와 같은 방식). */
+  const historySeq = useRef(0);
+
+  const loadHistory = useCallback(async () => {
+    const seq = ++historySeq.current;
+    const mode = historyMode;
+    const q = historyQ;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const res = await fetch(
+        `/api/bulk-message/history?mode=${mode}&q=${encodeURIComponent(q.trim())}`,
+      );
+      const j = await res.json().catch(() => null);
+      if (seq !== historySeq.current) return;
+      if (!res.ok || j?.success !== true) {
+        throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
+      }
+      const rows = Array.isArray(j.data?.rows) ? j.data.rows : [];
+      if (mode === "companies") setHistoryCompanies(rows as HistoryCompanyRow[]);
+      else setHistoryJobs(rows as HistoryJobRow[]);
+      setHistoryLoadedQ(q);
+    } catch (e) {
+      if (seq !== historySeq.current) return;
+      setHistoryError(`발송 기록을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
+    } finally {
+      if (seq === historySeq.current) setHistoryLoading(false);
+    }
+  }, [historyMode, historyQ]);
+
+  useEffect(() => {
+    if (!historyActive) return;
+    // 상세를 보는 동안에는 목록을 다시 부르지 않는다 — 뒤에서 목록이 바뀌어도 보던 상세는 그대로다.
+    if (historyView !== "list") return;
+    const timer = setTimeout(() => { void loadHistory(); }, HISTORY_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [historyActive, historyView, loadHistory]);
+
+  const retryHistory = useCallback(() => { void loadHistory(); }, [loadHistory]);
+
+  /**
+   * 발송 한 건의 수신자별 신호를 연다.
+   *
+   * ★목록은 **같은 앱의 모든 직원 발송**을 보여 주는데, 상세를 여는 통로(`GET jobs/[id]`)는
+   *  「내가 보낸 것」만 연다(서버 `getJob` 의 senderEmail 검문). 그래서 남의 발송을 누르면
+   *  404 가 온다 — 그때는 「불러오지 못했어요」로 뭉뚱그리지 않고 이유를 그대로 적는다.
+   */
+  const openHistoryJob = useCallback(async (job: HistoryJobRow) => {
+    const seq = ++historySeq.current;
+    setHistoryView("job");
+    setHistoryJob(job);
+    setHistoryCompany(null);
+    setHistoryJobRecipients([]);
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const res = await fetch(`/api/bulk-message/jobs/${encodeURIComponent(job.id)}`);
+      const j = await res.json().catch(() => null);
+      if (seq !== historySeq.current) return;
+      if (res.status === 404) throw new Error(HISTORY_JOB_FORBIDDEN);
+      if (!res.ok || j?.success !== true) {
+        throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
+      }
+      const rows = Array.isArray(j.data?.recipients) ? j.data.recipients : [];
+      setHistoryJobRecipients(rows as RecipientRow[]);
+    } catch (e) {
+      if (seq !== historySeq.current) return;
+      setHistoryError(loadErrorText(e, "발송 상세를 불러오지 못했어요."));
+    } finally {
+      if (seq === historySeq.current) setHistoryLoading(false);
+    }
+  }, []);
+
+  /** 회사 한 곳이 받은 모든 안내를 연다(열쇠는 목록 줄이 들고 있는 서버 값 그대로). */
+  const openHistoryCompany = useCallback(async (key: string) => {
+    const seq = ++historySeq.current;
+    setHistoryView("company");
+    setHistoryJob(null);
+    setHistoryJobRecipients([]);
+    setHistoryCompany(null);
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const res = await fetch(`/api/bulk-message/history?company=${encodeURIComponent(key)}`);
+      const j = await res.json().catch(() => null);
+      if (seq !== historySeq.current) return;
+      if (!res.ok || j?.success !== true) {
+        throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
+      }
+      setHistoryCompany(j.data as HistoryCompanyDetail);
+    } catch (e) {
+      if (seq !== historySeq.current) return;
+      setHistoryError(`회사 이력을 불러오지 못했어요: ${loadErrorText(e, "잠시 후 다시 시도해 주세요.")}`);
+    } finally {
+      if (seq === historySeq.current) setHistoryLoading(false);
+    }
+  }, []);
+
+  const closeHistoryDetail = useCallback(() => {
+    historySeq.current += 1; // 돌아가는 중이던 상세 조회 응답은 버린다
+    setHistoryView("list");
+    setHistoryJob(null);
+    setHistoryJobRecipients([]);
+    setHistoryCompany(null);
+    setHistoryError("");
+    setHistoryLoading(false);
+  }, []);
+
+  /**
+   * 발송 상세의 「이 회사의 다른 발송 ›」 — 사업장별 보기로 건너뛴다.
+   *
+   * ★수신자 줄에는 **회사 열쇠가 없다**(서버 `getJob` 이 사업자번호·줄 번호를 안 내려 준다) —
+   *  그래서 회사 이력을 바로 열지 못하고, 회사명으로 검색해 그 회사 줄로 데려다 준다.
+   *  서버가 수신자 줄에 열쇠를 실어 주면 그때 곧장 여는 것으로 바꾼다.
+   */
+  const openCompanyByName = useCallback((companyName: string) => {
+    historySeq.current += 1;
+    setHistoryView("list");
+    setHistoryJob(null);
+    setHistoryJobRecipients([]);
+    setHistoryCompany(null);
+    setHistoryError("");
+    setHistoryMode("companies");
+    setHistoryQ(companyName);
+  }, []);
+
   // ── 단계 이동 가드 ───────────────────────────────────────────
   const targetsOk = canProceedWithTargets({
     loading: loadingTargets,
@@ -1577,5 +1736,26 @@ export function useBulkState() {
     stopJob,
     sendStartedAt,
     sendFinishedAt,
+    // 발송 기록 탭
+    historyActive,
+    setHistoryActive,
+    historyMode,
+    setHistoryMode,
+    historyQ,
+    setHistoryQ,
+    historyLoadedQ,
+    historyJobs,
+    historyCompanies,
+    historyView,
+    historyJob,
+    historyJobRecipients,
+    historyCompany,
+    historyLoading,
+    historyError,
+    openHistoryJob,
+    openHistoryCompany,
+    closeHistoryDetail,
+    openCompanyByName,
+    retryHistory,
   };
 }

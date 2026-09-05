@@ -314,11 +314,13 @@ describe("발송하기 / 사용방법 탭", () => {
     expect(step3Source).toContain("{!skipped && sendOutOfScopeCount > 0 && (");
   });
 
-  it("판 두 개를 늘 그리고(떼지 않고 숨김) 탭이 판을 가리킨다", () => {
+  it("판 세 개가 탭마다 있고(발송·사용방법은 떼지 않고 숨김) 탭이 판을 가리킨다", () => {
     const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
     // 판을 떼면 탭을 옮길 때마다 체크리스트·펼침·고르던 대상이 초기화된다 — 늘 그리고 hidden 으로 숨긴다.
-    expect(src.match(/role="tabpanel"/g) ?? []).toHaveLength(2);
+    // 발송 기록 판만 예외다 — 그 판의 상태는 훅(useBulkState)이 들고 있어 떼어도 잃는 것이 없다.
+    expect(src.match(/role="tabpanel"/g) ?? []).toHaveLength(3);
     expect(src).toContain('hidden={view !== "send"}');
+    expect(src).toContain('hidden={view !== "history"}');
     expect(src).toContain('hidden={view !== "manual"}');
     expect(src).toContain("aria-controls={v.paneId}");
   });

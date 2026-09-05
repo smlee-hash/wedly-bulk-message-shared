@@ -18,6 +18,7 @@ import { Step1Targets } from "./steps/Step1Targets";
 import { Step2Chat } from "./steps/Step2Chat";
 import { Step2Email } from "./steps/Step2Email";
 import { Step3Confirm } from "./steps/Step3Confirm";
+import { HistoryTab } from "./HistoryTab";
 
 // ────────────────────────────────────────────────────────────── 단계 표시
 
@@ -82,22 +83,36 @@ function Stepper({
 
 // ────────────────────────────────────────────────────────────── 본체
 
-/** 화면 보기 탭 — 두 판을 늘 그려 두고 안 보는 쪽만 숨긴다(탭을 옮겨도 상태가 남게). */
+/**
+ * 화면 보기 탭 — 발송하기 / 발송 기록 / 사용방법.
+ *
+ * ★발송·사용방법 판은 늘 그려 두고 안 보는 쪽만 숨긴다(탭을 옮겨도 고르던 대상·안내문이 남게).
+ * ★발송 기록 판만 **볼 때 그린다** — 기록 상태는 훅이 들고 있어 떼어도 잃는 것이 없고,
+ *  안 볼 때까지 그려 두면 그 판의 구간 단추·표가 첫 그림에 끼어든다.
+ */
 const VIEW_TABS = [
   { id: "send", label: "발송하기", tabId: "bulk-tab-send", paneId: "bulk-pane-send" },
+  { id: "history", label: "발송 기록", tabId: "bulk-tab-history", paneId: "bulk-pane-history" },
   { id: "manual", label: "사용방법", tabId: "bulk-tab-manual", paneId: "bulk-pane-manual" },
 ] as const;
+
+type ViewId = (typeof VIEW_TABS)[number]["id"];
 
 export default function BulkMessageScreen() {
   // 화면 보기 — 「발송하기」와 「사용방법」. 발송 쪽 상태는 훅이 들고 있어
   // 사용방법을 보다 돌아와도 고르던 대상·안내문·발송 진행이 그대로 남는다.
-  const [view, setView] = useState<"send" | "manual">("send");
+  const [view, setView] = useState<ViewId>("send");
 
   // 주소에 사용방법 구역 표식(#bulk-manual-…)이 붙어 오면 그 판을 열고 그 구역으로 내려 준다.
   // 판은 열려야 자리를 차지하므로 setView 뒤 화면이 한 번 그려진 다음(rAF) 옮긴다.
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const hash = window.location.hash;
+    // 주소에 #history 가 붙어 오면 발송 기록 판을 연다(상세창·알림에서 바로 걸어 올 자리).
+    if (hash === "#history") {
+      setView("history");
+      return undefined;
+    }
     if (!hash.startsWith("#bulk-manual-")) return undefined;
     setView("manual");
     const raf = window.requestAnimationFrame(() => {
@@ -122,6 +137,13 @@ export default function BulkMessageScreen() {
   }, [view]);
 
   const s = useBulkState();
+
+  // ★기록 조회는 **탭을 열었을 때만** 나간다 — 화면을 띄우기만 해도 수신자 표를 훑으면
+  //  이메일을 안 쓰는 담당자에게도 매번 무거운 조회가 걸린다.
+  const { setHistoryActive } = s;
+  useEffect(() => {
+    setHistoryActive(view === "history");
+  }, [view, setHistoryActive]);
 
   return (
     <>
@@ -353,6 +375,32 @@ export default function BulkMessageScreen() {
           sendFinishedAt={s.sendFinishedAt}
         />
       )}
+      </div>
+
+      {/* 발송 기록 판 — 볼 때만 그린다(상태는 훅이 들고 있어 떼어도 검색어·보기가 남는다). */}
+      <div role="tabpanel" id="bulk-pane-history" aria-labelledby="bulk-tab-history" hidden={view !== "history"}>
+        {view === "history" && (
+          <HistoryTab
+            mode={s.historyMode}
+            setMode={s.setHistoryMode}
+            q={s.historyQ}
+            setQ={s.setHistoryQ}
+            loadedQ={s.historyLoadedQ}
+            jobs={s.historyJobs}
+            companies={s.historyCompanies}
+            view={s.historyView}
+            job={s.historyJob}
+            jobRecipients={s.historyJobRecipients}
+            company={s.historyCompany}
+            loading={s.historyLoading}
+            error={s.historyError}
+            openJob={s.openHistoryJob}
+            openCompany={s.openHistoryCompany}
+            openCompanyByName={s.openCompanyByName}
+            closeDetail={s.closeHistoryDetail}
+            retry={s.retryHistory}
+          />
+        )}
       </div>
 
       {/* 사용방법 판 — 떼지 않고 숨긴다(탭을 옮겨도 체크리스트·펼침이 그대로). */}
