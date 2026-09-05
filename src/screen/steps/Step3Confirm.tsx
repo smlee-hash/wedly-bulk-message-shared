@@ -566,7 +566,7 @@ export function Step3Confirm({
                   <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-wedly-accent shadow-sm">
                     <History className="h-[18px] w-[18px] text-white" aria-hidden />
                   </span>
-                  <h3 className="min-w-0 text-wedly-section font-semibold text-wedly-t1 break-keep">발송 현황</h3>
+                  <h3 className="min-w-0 text-wedly-sub font-semibold text-wedly-t1 break-keep">발송 현황</h3>
                   <span className="ml-auto text-wedly-hint text-wedly-muted break-keep">
                     보낸 사람 {myName || "—"}
                     {sendStartedAt ? ` · 시작 ${clock(sendStartedAt)}` : ""}
