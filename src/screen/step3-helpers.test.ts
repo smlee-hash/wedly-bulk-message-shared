@@ -29,12 +29,14 @@ describe("새로고침 뒤 되살리기", () => {
     expect(progressHeadline("done")).toBe("발송이 끝났어요");
     expect(progressHeadline("interrupted")).toBe("발송이 멈췄어요");
     // 배선까지 본다 — 판단만 맞고 화면이 안 쓰면 옛 문구가 그대로 뜬다.
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
-    expect(src).toContain("progressHeadline(progress?.status)");
-    expect(src).toContain("restoredJobFromStore(saved)");
-    expect(src).toContain("setRestoredFromStore(true)");
-    expect(src).toContain("alertError(JOB_GONE_NOTICE)");
-    expect(src).toContain("{!restoredFromStore && (");
+    // 화면을 쪼갠 뒤로 상태는 useBulkState, 그림은 steps/Step3Confirm 이 들고 있다.
+    const hookSrc = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+    const step3Src = readFileSync(join(__dirname, "steps/Step3Confirm.tsx"), "utf8");
+    expect(step3Src).toContain("progressHeadline(progress?.status)");
+    expect(hookSrc).toContain("restoredJobFromStore(saved)");
+    expect(hookSrc).toContain("setRestoredFromStore(true)");
+    expect(hookSrc).toContain("alertError(JOB_GONE_NOTICE)");
+    expect(step3Src).toContain("{!restoredFromStore && (");
   });
 });
 
@@ -325,20 +327,23 @@ describe("estimateCost", () => {
   });
 
   it("화면 배선까지 본다 — 판단만 맞고 화면이 옛 상수를 쓰면 금액이 그대로다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    // 화면을 쪼갠 뒤로 상태는 useBulkState, 그림은 steps/Step3Confirm 이 들고 있다.
+    const hookSrc = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+    const step3Src = readFileSync(join(__dirname, "steps/Step3Confirm.tsx"), "utf8");
+    const allSrc = `${hookSrc}\n${step3Src}`;
     // 단가는 응답에 **객체로 실려 있을 때만** 갱신한다 — 없으면 직전 값을 그대로 둔다.
     // (배포 교체 중 옛 서버에 걸린 재조회 한 번에 화면 단가가 기본값으로 되돌아가면 안 된다.)
-    expect(src).toContain('if (rawPricing && typeof rawPricing === "object") setPricing(parsePricing(rawPricing));');
-    expect(src).not.toContain("setPricing(parsePricing(j.data?.pricing))");
-    expect(src).toContain("estimateCost(selectedCount, pricing)");
+    expect(hookSrc).toContain('if (rawPricing && typeof rawPricing === "object") setPricing(parsePricing(rawPricing));');
+    expect(hookSrc).not.toContain("setPricing(parsePricing(j.data?.pricing))");
+    expect(hookSrc).toContain("estimateCost(selectedCount, pricing)");
     // 옛 단가 상수는 남아 있으면 안 된다
-    expect(src).not.toContain("COST_MAX");
-    expect(src).not.toContain("COST_MIN");
+    expect(allSrc).not.toContain("COST_MAX");
+    expect(allSrc).not.toContain("COST_MIN");
     // 3단계 표와 발송 확인 모달이 같은 값을 쓴다
-    expect(src).toContain("won(cost.alimtalk)");
-    expect(src).toContain("won(cost.smsMax)");
+    expect(step3Src).toContain("won(cost.alimtalk)");
+    expect(step3Src).toContain("won(cost.smsMax)");
     // 시험 발송은 알림톡 기준 문구 + 안내 내용을 함께 보낸다
-    expect(src).toContain("phone: testPhone, noticeCategory");
-    expect(src).toContain("보냈어요. 카카오톡 알림톡을 확인해 주세요.");
+    expect(hookSrc).toContain("phone: testPhone, noticeCategory");
+    expect(hookSrc).toContain("보냈어요. 카카오톡 알림톡을 확인해 주세요.");
   });
 });

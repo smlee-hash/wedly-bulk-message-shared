@@ -8,6 +8,26 @@ import { MAX_RECIPIENTS, TEST_SEND_CAP_PARTNER, TEST_SEND_CAP_STAFF } from "./li
 const html = renderToStaticMarkup(<BulkMessageManual />);
 const source = readFileSync(join(__dirname, "BulkMessageManual.tsx"), "utf8");
 
+// 화면을 쪼갠 뒤로 글자가 사는 파일이 갈렸다 — 같은 것을 그 글자가 실제로 있는 파일에서 잰다.
+const hookSource = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+const step1Source = readFileSync(join(__dirname, "steps/Step1Targets.tsx"), "utf8");
+const step3Source = readFileSync(join(__dirname, "steps/Step3Confirm.tsx"), "utf8");
+
+/**
+ * 「옛 코드가 되살아나지 않았나」를 재는 자리 — 옛 BulkMessageScreen.tsx 하나가 들고 있던 코드가
+ * 쪼개져 흩어졌으므로, **그 쪼갠 조각들만** 이어 붙여 본다(steps/ 가 늘어도 저절로 따라간다).
+ *
+ * ★판정 도우미(step1~3-helpers.ts)는 넣지 않는다 — 그 파일들의 주석은 「무엇을 없앴는지」를
+ *  적어 두고 있어(예: step1-helpers.ts:3) 옛 이름이 글자로 남아 있는 게 정상이다.
+ */
+function allScreenSources(): string {
+  const files = ["BulkMessageScreen.tsx", "useBulkState.ts", "bulk-ui.tsx"];
+  for (const name of readdirSync(join(__dirname, "steps"), { encoding: "utf8" })) {
+    if (name.endsWith(".tsx") && !name.includes(".test.")) files.push(join("steps", name));
+  }
+  return files.map((name) => readFileSync(join(__dirname, name), "utf8")).join("\n");
+}
+
 describe("사용방법 탭 — 승인 미리보기(가독성 판)의 내용을 다 옮겼나", () => {
   it("구역 제목 6개가 다 있다", () => {
     for (const title of [
@@ -209,7 +229,8 @@ describe("WEDLY 디자인 토큰", () => {
   it("src/screen 의 화면 파일에 raw 색 클래스가 없다", () => {
     const dir = join(__dirname);
     const hits: string[] = [];
-    for (const name of readdirSync(dir)) {
+    // ★재귀로 훑는다 — steps/ 아래로 화면을 쪼갠 뒤 하위 폴더가 검사에서 빠지면 안 된다.
+    for (const name of readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       if (!name.endsWith(".tsx")) continue;
       readFileSync(join(dir, name), "utf8")
         .split("\n")
@@ -241,60 +262,56 @@ describe("발송하기 / 사용방법 탭", () => {
   });
 
   it("1단계 화면에서 탭 3개·붙여넣기·진행상태 고르개가 걷혔다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    const src = allScreenSources();
     // 되살리지 마라 — 대상은 「계약일이 적힌 고객」 하나로 고정됐다(2026-09-04 사장님 확정).
     for (const gone of ["MultiCheckSelect", "loadPasteNow", "checkedKeysOnLoad", "STATUS_PLACEHOLDER", "번호 붙여넣기"]) {
       expect(src, `옛 코드 「${gone}」`).not.toContain(gone);
     }
     // 고른 사람은 열쇠가 아니라 줄을 통째로 담는다 — 검색으로 좁혀도 명단에서 안 빠지게.
-    expect(src).toContain("useState<Map<string, Target>>");
-    expect(src).toContain("hiddenPickedCount");
+    expect(hookSource).toContain("useState<Map<string, Target>>");
+    expect(hookSource).toContain("hiddenPickedCount");
   });
 
   it("고른 뒤 보낼 수 없게 바뀐 사람은 자동으로 빠지고, 왜 빠졌는지 알린다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
-    expect(src).toContain("reconcilePicked");
-    expect(src).toContain("droppedSummary(droppedPicked)");
-    expect(src).toContain("고른 명단에서 자동으로 뺐어요");
+    expect(hookSource).toContain("reconcilePicked");
+    expect(step1Source).toContain("droppedSummary(droppedPicked)");
+    expect(step1Source).toContain("고른 명단에서 자동으로 뺐어요");
   });
 
   it("3단계 「받는 사람」에 자동 제외 건수를 붙이지 않는다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+    const src = readFileSync(join(__dirname, "steps/Step3Confirm.tsx"), "utf8");
     // 그 숫자는 1단계에 보이는 목록에서 세는 값이라 검색어만 바꿔도 흔들린다 — 되살리지 마라.
     expect(src).not.toContain("자동 제외)");
   });
 
   it("파트너 앱 담당 잠금을 서버 값으로 켜고, 조회 실패로 풀지 않는다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
     // 판단은 nextManagerLock 이 혼자 한다 — 화면이 Boolean(...) 으로 직접 정하면 실패 경로에서 잠금이 풀린다.
     // 응답 덩어리를 통째로 넘겨야 「칸이 없음」과 「false」를 함수가 구분한다
-    expect(src).toContain("nextManagerLock(prev, { ok: true, data: j.data })");
-    expect(src).not.toContain("lockedToMe: j.data?.lockedToMe");
-    expect(src).toContain("nextManagerLock(prev, { ok: false })");
-    expect(src).not.toContain("setLockedToMe(Boolean(");
+    expect(hookSource).toContain("nextManagerLock(prev, { ok: true, data: j.data })");
+    expect(hookSource).not.toContain("lockedToMe: j.data?.lockedToMe");
+    expect(hookSource).toContain("nextManagerLock(prev, { ok: false })");
+    expect(hookSource).not.toContain("setLockedToMe(Boolean(");
     // 그릴지 말지도 함수가 정한다 — 「모름」에 고르개가 뜨는 것을 화면이 다시 판단하지 않게
-    expect(src).toContain('managerControl(lockedToMe) === "picker"');
-    expect(src).toContain("useState<ManagerLock>(null)");
+    expect(step1Source).toContain('managerControl(lockedToMe) === "picker"');
+    expect(hookSource).toContain("useState<ManagerLock>(null)");
   });
 
   it("발송 확인에 환불 고객 경고를 띄우고, 판정은 환불일 하나로 한다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
-    expect(src).toContain("refundedNotice(selected)");
-    expect(src).toContain("명이 포함돼 있어요");
+    expect(hookSource).toContain("refundedNotice(selected)");
+    expect(step3Source).toContain("명이 포함돼 있어요");
     // 표의 빨간 띠도 같은 함수를 본다 — 둘이 어긋나면 경고가 거짓말이 된다
-    expect(src).toContain("isRefunded(t)");
-    expect(src).not.toContain("Boolean(t.refundedAt)");
+    expect(step1Source).toContain("isRefunded(t)");
+    expect(allScreenSources()).not.toContain("Boolean(t.refundedAt)");
     // 전체 선택 동작은 그대로다 — 사장님은 「표시」만 요구했다
-    expect(src).toContain("else for (const t of sendableTargets) next.set(keyOf(t), t);");
+    expect(hookSource).toContain("else for (const t of sendableTargets) next.set(keyOf(t), t);");
   });
 
   it("발송이 걸러낸 사람을 알리고, 같은 사실을 두 모양으로 그리지 않는다", () => {
-    const src = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
-    expect(src).toContain("skippedNotice(j.data?.skipped)");
-    expect(src).toContain("명은 보내지 않았어요");
+    expect(hookSource).toContain("skippedNotice(j.data?.skipped)");
+    expect(step3Source).toContain("명은 보내지 않았어요");
     // 새 응답에서는 옛 두 줄(수신거부 N · 범위 밖 N)을 그리지 않는다 — 두 번 빠진 것으로 읽힌다.
-    expect(src).toContain("{!skipped && blockedCount > 0 && (");
-    expect(src).toContain("{!skipped && sendOutOfScopeCount > 0 && (");
+    expect(step3Source).toContain("{!skipped && blockedCount > 0 && (");
+    expect(step3Source).toContain("{!skipped && sendOutOfScopeCount > 0 && (");
   });
 
   it("판 두 개를 늘 그리고(떼지 않고 숨김) 탭이 판을 가리킨다", () => {

@@ -6,7 +6,11 @@ import BulkMessageScreen from "./BulkMessageScreen";
 
 // 화면을 실제로 그려서 잰다(효과는 안 돌아 통신은 일어나지 않는다) — 소스 글자 검사보다 강하다.
 const html = renderToStaticMarkup(<BulkMessageScreen />);
-const source = readFileSync(join(__dirname, "BulkMessageScreen.tsx"), "utf8");
+// 화면을 쪼갠 뒤로 글자가 사는 파일이 갈렸다 — 같은 것을 그 글자가 실제로 있는 파일에서 잰다.
+const hookSource = readFileSync(join(__dirname, "useBulkState.ts"), "utf8");
+const step1Source = readFileSync(join(__dirname, "steps/Step1Targets.tsx"), "utf8");
+const step2Source = readFileSync(join(__dirname, "steps/Step2Chat.tsx"), "utf8");
+const step3Source = readFileSync(join(__dirname, "steps/Step3Confirm.tsx"), "utf8");
 
 /** 그려진 markup 에서 검색 입력칸 태그 하나를 꺼낸다. */
 function searchInputTag(): string {
@@ -34,7 +38,7 @@ describe("검색 칸 — 지우개(✕)가 정확히 하나만 보인다", () =>
 
   it("지우개 단추는 우리가 그리는 하나뿐이다", () => {
     // 화면에 둘을 그려 두고 하나를 CSS 로 숨기는 식으로 때우지 않는다.
-    expect((source.match(/aria-label="검색어 지우기"/g) ?? []).length).toBe(1);
+    expect((step1Source.match(/aria-label="검색어 지우기"/g) ?? []).length).toBe(1);
     // 첫 그림에서는 검색어가 비어 있어 우리 지우개도 아직 없다 — ✕ 가 0개여야 한다.
     expect(html).not.toContain('aria-label="검색어 지우기"');
   });
@@ -63,9 +67,9 @@ describe("1단계 첫 그림 — 배포 QA로 확인한 모습이 유지된다",
 describe("2단계 채우기 칸 — 「다 채웠나」로 숨기지 않는다", () => {
   /** <FillForm ... /> 를 감싸는 조건식(그리는 자리 바로 앞의 { ... } && ) 을 통째로 꺼낸다. */
   function fillFormGate(): string {
-    const at = source.indexOf("<FillForm\n");
+    const at = step2Source.indexOf("<FillForm\n");
     expect(at, "<FillForm 을 그리는 자리가 있어야 한다").toBeGreaterThan(0);
-    const head = source.slice(0, at);
+    const head = step2Source.slice(0, at);
     const open = head.lastIndexOf("\n            {");
     expect(open, "FillForm 을 감싼 조건식의 시작").toBeGreaterThan(0);
     return head.slice(open);
@@ -79,23 +83,23 @@ describe("2단계 채우기 칸 — 「다 채웠나」로 숨기지 않는다",
 
   it("조건식은 showFillForm 하나로만 판단한다", () => {
     expect(fillFormGate()).toContain("fillFormVisible");
-    expect(source).toContain("const fillFormVisible = showFillForm({");
+    expect(hookSource).toContain("const fillFormVisible = showFillForm({");
   });
 
   it("「모두 채웠어요」 안내는 입력칸을 갈아치우지 않고 그 아래에 덧붙는다", () => {
-    const form = source.indexOf("<FillForm\n");
-    const done = source.indexOf('title="모두 채웠어요"');
+    const form = step2Source.indexOf("<FillForm\n");
+    const done = step2Source.indexOf('title="모두 채웠어요"');
     expect(done, "「모두 채웠어요」 안내").toBeGreaterThan(form);
-    expect(source).toContain("{fillFormVisible && fillsComplete && (");
+    expect(step2Source).toContain("{fillFormVisible && fillsComplete && (");
   });
 });
 
 describe("3단계 예상 비용 칩 — 두 줄로 접혀도 테두리를 뚫지 않는다", () => {
   /** 칩 글자 바로 앞의 <span ...> 여는 태그를 꺼낸다. */
   function chipTag(text: string): string {
-    const at = source.indexOf(text);
+    const at = step3Source.indexOf(text);
     expect(at, `칩 「${text}」`).toBeGreaterThan(0);
-    const head = source.slice(0, at);
+    const head = step3Source.slice(0, at);
     const open = head.lastIndexOf("<span");
     return head.slice(open);
   }
