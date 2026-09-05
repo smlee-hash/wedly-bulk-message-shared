@@ -75,6 +75,7 @@ import {
 import {
   HISTORY_DEBOUNCE_MS,
   type HistoryCompanyDetail,
+  type HistoryCompanyItem,
   type HistoryCompanyRow,
   type HistoryJobRecipient,
   type HistoryJobRow,
@@ -195,6 +196,16 @@ export interface ManualEmailEdit {
   error: string;
   persist: boolean;
 }
+
+/**
+ * 서식 조회(`loadHistoryMail`)가 실제로 쓰는 신원 조각.
+ * ★발송 상세 줄(`HistoryJobRecipient`)도, 회사 상세 항목(`HistoryCompanyItem` + 회사 머리)도
+ *  이 다섯 칸만 채우면 같은 조회 함수·같은 모달을 쓸 수 있다.
+ */
+export type MailRecipientIdentity = Pick<
+  HistoryJobRecipient,
+  "id" | "companyName" | "representative" | "phone" | "email"
+>;
 
 /**
  * 줄을 가리키는 열쇠.
@@ -1369,7 +1380,7 @@ export function useBulkState() {
   const [historyMail, setHistoryMail] = useState<HistoryMailState | null>(null);
   const mailSeq = useRef(0);
   /** 다시 시도가 무엇을 다시 부를지 — 누른 줄과 그 발송 번호를 그대로 들고 있는다. */
-  const mailTarget = useRef<{ jobId: string; r: HistoryJobRecipient } | null>(null);
+  const mailTarget = useRef<{ jobId: string; r: MailRecipientIdentity } | null>(null);
 
   const closeHistoryMail = useCallback(() => {
     mailSeq.current += 1; // 돌아가는 중이던 서식 조회 응답은 버린다
@@ -1377,7 +1388,7 @@ export function useBulkState() {
     setHistoryMail(null);
   }, []);
 
-  const loadHistoryMail = useCallback(async (jobId: string, r: HistoryJobRecipient) => {
+  const loadHistoryMail = useCallback(async (jobId: string, r: MailRecipientIdentity) => {
     const seq = ++mailSeq.current;
     mailTarget.current = { jobId, r };
     // 누른 줄의 신원을 먼저 세운다 — 불러오는 동안에도 「누구에게 간 서식인지」가 모달에 보여야 한다.
@@ -1508,6 +1519,27 @@ export function useBulkState() {
     if (!t) return;
     void loadHistoryMail(t.jobId, t.r);
   }, [loadHistoryMail]);
+
+  /**
+   * 회사 상세 표의 줄에서 서식을 연다 — 발송 상세와 **같은 조회 함수**(`loadHistoryMail`)를 쓴다.
+   * ★신원(회사명·대표·연락처·이메일)은 `CompanyHistoryItem` 에 없다 — 지금 열려 있는 회사 상세
+   *  머리(`historyCompany`)에서 가져온다(그 표의 모든 줄이 같은 회사라 서버가 한 번만 준다).
+   * ★`hasMail`·`recipientId` 가 없는 줄은 표에서 이미 단추를 잠가 두지만, 여기서도 한 번 더 막는다.
+   */
+  const openHistoryCompanyMail = useCallback(
+    (item: HistoryCompanyItem) => {
+      const c = historyCompany;
+      if (!c || !item.jobId || !item.recipientId) return;
+      void loadHistoryMail(item.jobId, {
+        id: item.recipientId,
+        companyName: c.companyName,
+        representative: c.representative,
+        phone: c.phone,
+        email: c.email,
+      });
+    },
+    [historyCompany, loadHistoryMail],
+  );
 
   /**
    * 「다시 시도」 — 지금 보고 있는 판을 다시 부른다.
@@ -1840,6 +1872,7 @@ export function useBulkState() {
     retryHistory,
     historyMail,
     openHistoryMail,
+    openHistoryCompanyMail,
     closeHistoryMail,
     retryHistoryMail,
   };

@@ -5,6 +5,7 @@ import {
   HISTORY_MODE_OPTIONS,
   MAIL_EXPIRED_TITLE,
   channelBadges,
+  companyItemMailEnabled,
   companyJumpKey,
   companyMetaLine,
   emailSourceLabel,
@@ -350,6 +351,27 @@ describe("companyJumpKey — 「이 회사의 다른 발송 ›」이 열 열쇠
     expect(companyJumpKey(recipient({ companyKey: "" }))).toBe("");
     expect(companyJumpKey({})).toBe("");
     expect(companyJumpKey({ companyKey: "  " })).toBe("");
+  });
+});
+
+describe("companyItemMailEnabled — 회사 상세의 「서식 보기」가 열리는 조건", () => {
+  it("hasMail 이 참이고 수신자 열쇠가 있으면 열린다", () => {
+    expect(companyItemMailEnabled({ hasMail: true, recipientId: "cr1" })).toBe(true);
+  });
+
+  it("hasMail 이 없거나 거짓이면 잠긴다", () => {
+    expect(companyItemMailEnabled({ hasMail: false, recipientId: "cr1" })).toBe(false);
+    expect(companyItemMailEnabled({ recipientId: "cr1" })).toBe(false);
+  });
+
+  it("수신자 열쇠가 없거나 빈 글자면 잠긴다", () => {
+    expect(companyItemMailEnabled({ hasMail: true })).toBe(false);
+    expect(companyItemMailEnabled({ hasMail: true, recipientId: "" })).toBe(false);
+    expect(companyItemMailEnabled({ hasMail: true, recipientId: "  " })).toBe(false);
+  });
+
+  it("서버가 두 칸을 아직 안 주는 옛 응답도 안전하게 잠긴다", () => {
+    expect(companyItemMailEnabled({})).toBe(false);
   });
 });
 

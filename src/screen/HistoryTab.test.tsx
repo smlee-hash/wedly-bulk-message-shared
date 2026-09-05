@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { HistoryTab, type HistoryTabProps } from "./HistoryTab";
 import type {
   HistoryCompanyDetail,
+  HistoryCompanyItem,
   HistoryCompanyRow,
   HistoryJobRecipient,
   HistoryJobRow,
@@ -67,6 +68,25 @@ function recipient(over: Partial<HistoryJobRecipient> = {}): HistoryJobRecipient
   };
 }
 
+function companyItem(over: Partial<HistoryCompanyItem> = {}): HistoryCompanyItem {
+  return {
+    jobId: "j1",
+    createdAt: "2026-09-04T01:43:00.000Z",
+    title: "장려금 2차 서류 제출 안내",
+    channel: "email",
+    senderName: "김민수",
+    emailSignal: "확인함",
+    chatSignal: "",
+    emailSource: "basic",
+    emailError: "",
+    status: "sent",
+    error: "",
+    recipientId: "cr1",
+    hasMail: true,
+    ...over,
+  };
+}
+
 function mailState(over: Partial<HistoryMailState> = {}): HistoryMailState {
   return {
     recipientId: "r1",
@@ -104,6 +124,7 @@ function props(over: Partial<HistoryTabProps> = {}): HistoryTabProps {
     retry: () => {},
     mail: null,
     openMail: () => {},
+    openCompanyMail: () => {},
     closeMail: () => {},
     retryMail: () => {},
     ...over,
@@ -440,5 +461,31 @@ describe("회사 상세", () => {
 
   it("「목록으로」로 돌아간다", () => {
     expect(html).toContain("사업장 목록으로");
+  });
+
+  it("「서식 보기」는 hasMail 과 수신자 열쇠가 함께 있는 줄에서만 눌린다", () => {
+    const unlocked = draw({
+      view: "company",
+      company: { ...detail, items: [companyItem({ hasMail: true, recipientId: "cr1" })] },
+    });
+    const noMail = draw({
+      view: "company",
+      company: { ...detail, items: [companyItem({ hasMail: false, recipientId: "cr1" })] },
+    });
+    const noKey = draw({
+      view: "company",
+      company: { ...detail, items: [companyItem({ hasMail: true, recipientId: undefined })] },
+    });
+    expect(unlocked).toContain("서식 보기");
+    expect((noMail.match(/disabled/g) ?? []).length).toBeGreaterThan(
+      (unlocked.match(/disabled/g) ?? []).length,
+    );
+    expect((noKey.match(/disabled/g) ?? []).length).toBeGreaterThan(
+      (unlocked.match(/disabled/g) ?? []).length,
+    );
+  });
+
+  it("서버가 열쇠를 안 줘서 잠긴다는 옛 사유 줄은 사라졌다", () => {
+    expect(html).not.toContain("수신자 열쇠가 실려 오지 않습니다");
   });
 });

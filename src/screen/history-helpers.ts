@@ -114,6 +114,22 @@ export interface HistoryCompanyItem {
   emailError: string;
   status: string;
   error: string;
+  /**
+   * 이 줄의 수신자 열쇠 — 「서식 보기」를 부를 때 발송 상세와 같은 조회 통로
+   * (`/api/bulk-message/history/jobs/{jobId}/mail?recipient=`)에 쓴다.
+   * ★선택 칸이다 — 서버가 아직 안 주는 옛 응답도 있을 수 있어, 없으면 잠금으로 안전하게 그린다.
+   */
+  recipientId?: string;
+  /** 이 줄에 띄울 서식이 남아 있나(90일이 지나면 거짓). 없으면 잠금 취급. */
+  hasMail?: boolean;
+}
+
+/**
+ * 회사 상세 표에서 「서식 보기」를 누를 수 있나 — `hasMail` 이 참이고 수신자 열쇠가 있을 때만.
+ * ★둘 다 선택 칸이라 옛 응답(둘 다 없음)에도 안전하게 잠금으로 떨어진다.
+ */
+export function companyItemMailEnabled(it: { hasMail?: boolean; recipientId?: string | null }): boolean {
+  return it.hasMail === true && !!String(it.recipientId ?? "").trim();
 }
 
 /** 회사 상세 — 서버 `CompanyHistoryDetail`. */

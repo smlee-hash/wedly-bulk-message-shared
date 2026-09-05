@@ -21,6 +21,7 @@ import {
   HISTORY_SEARCH_PLACEHOLDER,
   MAIL_MISSING_NOTE,
   channelBadges,
+  companyItemMailEnabled,
   companyJumpKey,
   companyMetaLine,
   emailSourceLabel,
@@ -34,22 +35,13 @@ import {
   signalBadge,
   type HistoryBadge,
   type HistoryCompanyDetail,
+  type HistoryCompanyItem,
   type HistoryCompanyRow,
   type HistoryJobRecipient,
   type HistoryJobRow,
   type HistoryMailState,
   type HistoryMode,
 } from "./history-helpers";
-
-/**
- * 회사 상세의 「서식 보기」가 왜 아직 잠겨 있는지 — 표 밑에 **한 번만** 적는다.
- *
- * ★발송 상세에서는 열린다 — 서버 기록 상세 통로가 줄마다 수신자 열쇠를 실어 준다.
- *  회사 이력 통로(`history?company=`)는 그 열쇠를 안 준다(서버 `CompanyHistoryItem` 에 칸이 없다).
- *  그래서 이 표에서만 서식을 못 부른다 — 「준비 중」이라고만 적고 이유를 숨기지 않는다.
- */
-const COMPANY_VIEW_MAIL_NOTE =
-  "이 표의 「서식 보기」는 아직 눌리지 않아요 — 회사 이력에는 수신자 열쇠가 실려 오지 않습니다. 발송별 보기에서 그 발송을 열면 서식을 볼 수 있어요.";
 
 /* ────────────────────────────── 작은 조각 ────────────────────────────── */
 
@@ -192,6 +184,8 @@ export interface HistoryTabProps {
   /** 「서식 보기」 모달 — `null` 이면 닫힘. */
   mail: HistoryMailState | null;
   openMail: (r: HistoryJobRecipient) => void;
+  /** 회사 상세 표의 「서식 보기」— 발송 상세와 같은 모달을 연다. */
+  openCompanyMail: (item: HistoryCompanyItem) => void;
   closeMail: () => void;
   retryMail: () => void;
 }
@@ -216,6 +210,7 @@ export function HistoryTab({
   retry,
   mail,
   openMail,
+  openCompanyMail,
   closeMail,
   retryMail,
 }: HistoryTabProps) {
@@ -557,7 +552,14 @@ export function HistoryTab({
                       {emailSourceLabel(it.emailSource, it.channel)}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
-                      <Button type="button" variant="secondary" size="xs" disabled>
+                      {/* 서식이 남아 있는 줄에만 열린다 — 발송 상세와 같은 조회 함수·같은 모달. */}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => openCompanyMail(it)}
+                        disabled={!companyItemMailEnabled(it)}
+                      >
                         서식 보기
                       </Button>
                     </td>
@@ -567,7 +569,7 @@ export function HistoryTab({
             </tbody>
           </TableBox>
           <p className="mt-2 text-wedly-hint text-wedly-muted break-keep">
-            {COMPANY_VIEW_MAIL_NOTE} 이메일 서식은 90일 뒤 지워지지만 제목·보낸 시각·신호는 남습니다.
+            {MAIL_MISSING_NOTE} 이메일 서식은 90일 뒤 지워지지만 제목·보낸 시각·신호는 남습니다.
           </p>
           {/* 회사 상세는 열쇠가 무엇이었는지도 밝힌다 — 「왜 이 줄들이 한 회사인가」의 근거다. */}
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-wedly-hint text-wedly-muted break-keep">
