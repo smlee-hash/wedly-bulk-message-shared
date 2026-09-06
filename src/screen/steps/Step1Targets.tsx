@@ -15,6 +15,7 @@ import { cn } from "../../ui/cn";
 import { MAX_RECIPIENTS } from "../limits";
 import {
   CHANNEL_OPTIONS,
+  EMAIL_SOURCE_LEGEND,
   LOADING_TARGETS_HINT,
   MANAGER_LOCKED_LABEL,
   MANAGER_UNKNOWN_LABEL,
@@ -22,6 +23,7 @@ import {
   channelNote,
   droppedSummary,
   emailMode,
+  emailSourceBadge,
   excludeChipVariant,
   isRefunded,
   managerControl,
@@ -115,11 +117,19 @@ function EmailCell({
     );
   }
   if (row.email) {
+    // ★출처 딱지는 manual 딱지와 한 줄에 같이 서지 않는다 — manual 이면 emailSource 도 항상
+    //  "manual" 이라 emailSourceBadge 가 어차피 null 을 주지만, 우선순위를 코드로도 못박아 둔다.
+    const sourceBadge = manual ? null : emailSourceBadge(row.emailSource);
     return (
-      <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="inline-flex flex-wrap items-center gap-2">
         {/* 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로 접는다. */}
         <span className="min-w-0 break-all">{row.email}</span>
         {manual && <Badge variant="blue">직접 입력 · {manual.persist ? "자료 저장" : "이번만"}</Badge>}
+        {sourceBadge && (
+          <Badge variant={sourceBadge.variant} className="whitespace-nowrap">
+            {sourceBadge.label}
+          </Badge>
+        )}
       </span>
     );
   }
@@ -528,6 +538,11 @@ export function Step1Targets({
               </tbody>
             </table>
           </div>
+
+          {/* ★표 아래 범례 — 이메일 열이 있을 때만(주소가 없는 통로에서는 딱지 자체가 안 그려진다). */}
+          {emailShown && (
+            <p className="mt-2 text-wedly-hint text-wedly-muted break-keep">{EMAIL_SOURCE_LEGEND}</p>
+          )}
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={() => goStep(2)} disabled={!targetsOk}>

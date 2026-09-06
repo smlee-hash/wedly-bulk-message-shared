@@ -394,6 +394,24 @@ export function applyManualEmail<T extends ChannelTarget>(t: T, manual?: ManualE
   return { ...t, email: manual.email, emailSource: "manual", emailSendable: true, emailExcludeReason: "" };
 }
 
+/** 표 아래(또는 열 머리 옆)에 다는 출처 범례 한 줄(2026-09-06 신설). */
+export const EMAIL_SOURCE_LEGEND = "출처 — 경정청구 · 신청서 · 직접 입력(기본정보 주소는 딱지 없음)";
+
+const EMAIL_SOURCE_BADGES: Record<string, { label: string; variant: "purple" | "teal" }> = {
+  tax53: { label: "경정청구", variant: "purple" },
+  applicant: { label: "신청서", variant: "teal" },
+};
+
+/**
+ * 이메일 열의 출처 딱지(2026-09-06 신설, 승인 시안 §바꾼 뒤).
+ * 경정청구·신청서에서 찾아온 주소만 표시한다 — 기본정보("basic")는 가장 흔한 경우라
+ * 딱지를 안 붙이고(화면이 시끄러워지지 않게), 손으로 넣은 주소("manual")는 이 함수가 아니라
+ * EmailCell 의 기존 「직접 입력」 딱지가 그대로 그린다.
+ */
+export function emailSourceBadge(source: string): { label: string; variant: "purple" | "teal" } | null {
+  return EMAIL_SOURCE_BADGES[source] ?? null;
+}
+
 export interface EmailTargetCounts {
   /** 계약한 고객(검색 중이면 검색에 걸린 고객) */
   contract: number;

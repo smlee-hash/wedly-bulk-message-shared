@@ -6,7 +6,8 @@ type BadgeVariant =
   | "green"
   | "red"
   | "yellow"
-  | "purple";
+  | "purple"
+  | "teal";
 
 type BadgeStrength = "soft" | "outline" | "strong";
 
@@ -32,6 +33,7 @@ const dotStyles: Record<Exclude<BadgeVariant, "default">, string> = {
   red: "bg-wedly-red",
   yellow: "bg-wedly-gold-ink",
   purple: "bg-wedly-purple",
+  teal: "bg-wedly-teal",
 };
 
 const strongStyles: Record<BadgeVariant, string> = {
@@ -41,6 +43,7 @@ const strongStyles: Record<BadgeVariant, string> = {
   red: "bg-wedly-red-ink text-white",
   yellow: "bg-[#9E5100] text-white",
   purple: "bg-wedly-purple-ink text-white",
+  teal: "bg-wedly-teal-ink text-white",
 };
 
 const outlineStyles: Record<BadgeVariant, string> = {
@@ -50,6 +53,7 @@ const outlineStyles: Record<BadgeVariant, string> = {
   red: "border border-wedly-red-ink bg-white text-wedly-red-ink",
   yellow: "border border-[#9E5100] bg-white text-[#9E5100]",
   purple: "border border-wedly-purple-ink bg-white text-wedly-purple-ink",
+  teal: "border border-wedly-teal-ink bg-white text-wedly-teal-ink",
 };
 
 export function Badge({

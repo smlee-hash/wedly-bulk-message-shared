@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHANNEL_OPTIONS,
+  EMAIL_SOURCE_LEGEND,
   LIST_DEBOUNCE_MS,
   MANAGER_ALL,
   MANAGER_MINE,
@@ -14,6 +15,7 @@ import {
   channelNote,
   droppedSummary,
   emailMode,
+  emailSourceBadge,
   emailTargetCounts,
   excludeChipVariant,
   hiddenPickedCount,
@@ -626,6 +628,27 @@ describe("applyManualEmail", () => {
 
   it("직접 입력이 없으면 받은 줄 그대로다", () => {
     expect(applyManualEmail(empty, undefined)).toBe(empty);
+  });
+});
+
+describe("emailSourceBadge — 경정청구·신청서만 딱지, 기본정보·손입력은 없다(2026-09-06 신설)", () => {
+  it("경정청구 53이메일(tax53)은 보라 딱지 「경정청구」", () => {
+    expect(emailSourceBadge("tax53")).toEqual({ label: "경정청구", variant: "purple" });
+  });
+
+  it("신청자이메일(applicant)은 청록 딱지 「신청서」", () => {
+    expect(emailSourceBadge("applicant")).toEqual({ label: "신청서", variant: "teal" });
+  });
+
+  it("기본정보(basic)·손입력(manual)·빈 값·모르는 값은 딱지가 없다 — 가장 흔한 경우라 화면이 시끄러워지지 않게", () => {
+    expect(emailSourceBadge("basic")).toBeNull();
+    expect(emailSourceBadge("manual")).toBeNull();
+    expect(emailSourceBadge("")).toBeNull();
+    expect(emailSourceBadge("unknown-value")).toBeNull();
+  });
+
+  it("범례 문구는 출처 세 가지를 한 줄로 안내한다", () => {
+    expect(EMAIL_SOURCE_LEGEND).toBe("출처 — 경정청구 · 신청서 · 직접 입력(기본정보 주소는 딱지 없음)");
   });
 });
 
