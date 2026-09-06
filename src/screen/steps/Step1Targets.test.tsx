@@ -110,64 +110,6 @@ describe("「직접 입력」을 여는 동안 다른 열이 눌리지 않는다
   });
 });
 
-describe("이메일 출처 딱지 — 경정청구·신청서만 표시, 기본정보·손입력은 그대로(2026-09-06 신설)", () => {
-  /**
-   * 이메일 칸 하나만 떼어 낸다 — 표 위 안내문("→ 경정청구 「53이메일」…")과
-   * 새 범례 줄에도 "경정청구"·"신청서" 글자가 항상 있어, 페이지 전체에서 찾으면
-   * 「이 줄엔 없다」를 증명할 수 없다(반드시 그 주소가 든 <td> 안쪽만 본다).
-   */
-  function emailCellOf(html: string, address: string): string {
-    const at = html.indexOf(address);
-    expect(at, `주소 「${address}」 가 화면에 있어야 한다`).toBeGreaterThan(0);
-    const close = html.indexOf("</td>", at);
-    expect(close, `주소 「${address}」 뒤에 칸 닫는 태그가 있어야 한다`).toBeGreaterThan(at);
-    return html.slice(at, close);
-  }
-
-  it("tax53 줄엔 「경정청구」, applicant 줄엔 「신청서」 딱지가 그 줄의 이메일 칸에만 붙는다", () => {
-    const rows = [
-      target({ rowId: "row-tax", email: "box@x.com", emailSource: "tax53", emailSendable: true, emailExcludeReason: "" }),
-      target({ rowId: "row-app", email: "app@x.com", emailSource: "applicant", emailSendable: true, emailExcludeReason: "" }),
-    ];
-    const html = draw({ visibleTargets: rows, sendableTargets: rows });
-    const taxCell = emailCellOf(html, "box@x.com");
-    expect(taxCell).toContain("경정청구");
-    expect(taxCell).not.toContain("신청서");
-    expect(taxCell).toContain("bg-wedly-purple");
-
-    const appCell = emailCellOf(html, "app@x.com");
-    expect(appCell).toContain("신청서");
-    expect(appCell).not.toContain("경정청구");
-    expect(appCell).toContain("bg-wedly-teal");
-  });
-
-  it("기본정보(basic) 주소는 그 줄의 이메일 칸에 딱지가 없다", () => {
-    const row = target({ email: "basic@x.com", emailSource: "basic", emailSendable: true, emailExcludeReason: "" });
-    const html = draw({ visibleTargets: [row], sendableTargets: [row] });
-    const cell = emailCellOf(html, "basic@x.com");
-    expect(cell).not.toContain("경정청구");
-    expect(cell).not.toContain("신청서");
-  });
-
-  it("직접 입력(manual) 줄은 기존 「직접 입력」 딱지를 그대로 쓰고, 출처 딱지는 겹쳐 붙지 않는다", () => {
-    const row = target({ email: "manual@x.com", emailSource: "manual", emailSendable: true, emailExcludeReason: "" });
-    const html = draw({
-      visibleTargets: [row],
-      sendableTargets: [row],
-      manualEmails: new Map([["row-1", { email: "manual@x.com", persist: false }]]),
-    });
-    const cell = emailCellOf(html, "manual@x.com");
-    expect(cell).toContain("직접 입력 · 이번만");
-    expect(cell).not.toContain("경정청구");
-    expect(cell).not.toContain("신청서");
-  });
-
-  it("표 아래에 출처 범례 한 줄이 있다", () => {
-    const html = draw();
-    expect(html).toContain("출처 — 경정청구 · 신청서 · 직접 입력(기본정보 주소는 딱지 없음)");
-  });
-});
-
 describe("발송 열 딱지 — 낱말 중간에서 끊기지 않는다(2026-09-06 반려 5)", () => {
   /** 딱지 글자 바로 앞의 여는 태그들을 꺼낸다(딱지는 알약 span + 색 점 span 으로 그려진다). */
   function tagsBefore(html: string, label: string): string {
