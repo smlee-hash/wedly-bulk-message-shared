@@ -9,7 +9,7 @@
 // ★이 파일은 껍데기다 — 탭(발송하기/사용방법)·단계 표시줄·훅 호출·세 단계 배치만 한다.
 //  상태·효과·핸들러는 useBulkState.ts, 단계별 그림은 steps/ 아래, 작은 그림 부품은 bulk-ui.tsx 가 맡는다.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusBox } from "@wedly/ui-shared/ui";
 import { cn } from "../ui/cn";
 import { BulkMessageManual } from "./BulkMessageManual";
@@ -145,6 +145,18 @@ export default function BulkMessageScreen() {
   useEffect(() => {
     setHistoryActive(view === "history");
   }, [view, setHistoryActive]);
+
+  // ★탭을 옮기면 열려 있던 「기록」 모달을 닫는다 — 모달은 이제 탭 밖에서 그려지므로,
+  //  안 닫으면 3단계에서 연 타임라인이 발송 기록·사용방법 판까지 그대로 따라온다.
+  //  ★조건은 **탭이 실제로 바뀌었을 때**뿐이다(직전 탭을 ref 로 들고 비교한다) — 모달 상태를
+  //   의존성에 넣으면 여는 순간 이 효과가 다시 돌아 방금 연 모달을 스스로 닫는다.
+  const { closeHistoryTimeline } = s;
+  const prevView = useRef(view);
+  useEffect(() => {
+    if (prevView.current === view) return;
+    prevView.current = view;
+    closeHistoryTimeline(); // 닫혀 있으면 아무 일도 안 한다(같은 null 이면 다시 안 그린다)
+  }, [view, closeHistoryTimeline]);
 
   return (
     <>

@@ -1,6 +1,6 @@
 {
   "name": "@wedly/bulk-message-shared",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "WEDLY 단체 안내 발송 — 화면·규칙 공용 부품. ERP·일루아가 같은 커밋을 문다.",
   "main": "./src/index.ts",
@@ -30,6 +30,7 @@
     "@types/react-dom": "^19.0.0",
     "@wedly/ui-shared": "github:smlee-hash/wedly-ui-shared#12591848533bdd420b836b9afe5f41056b14cd87",
     "clsx": "^2.1.1",
+    "jsdom": "^25.0.1",
     "lucide-react": "^0.577.0",
     "next": "^15.0.0",
     "react": "^19.0.0",
