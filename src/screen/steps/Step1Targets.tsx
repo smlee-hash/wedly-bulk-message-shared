@@ -460,14 +460,14 @@ export function Step1Targets({
                       className={cn(
                         "group border-t border-wedly-bd transition-colors duration-150 ease-out",
                         // 제외 줄은 회색 층 위라 글자를 t2 까지만 낮춘다(muted 는 색 바탕에서 안 읽힌다)
-                        t.sendable ? "hover:bg-wedly-bg-page" : "bg-wedly-bg-gray/50 text-wedly-t2",
+                        t.sendable ? "hover:bg-wedly-bg-page" : "bg-wedly-bg-gray text-wedly-t2",
                       )}
                     >
                       <td
                         className={cn(
                           "sticky left-0 z-[1] px-3 py-2 align-middle",
                           // ★불투명 배경이 행 hover 색을 가려 group-hover 로 같이 받는다(2026-09-06 반려 4).
-                          t.sendable ? "bg-white group-hover:bg-wedly-bg-page" : "bg-wedly-bg-gray/50",
+                          t.sendable ? "bg-white group-hover:bg-wedly-bg-page" : "bg-wedly-bg-gray",
                           // ★환불 표시(빨간 inset)를 tr 의 box-shadow 대신 첫 고정 셀로 옮긴다 — tr 의 inset 은
                           //  스크롤 시 이 td 의 불투명 배경에 가려 안 보였다.
                           refunded && t.sendable && "border-l-[3px] border-wedly-red",
@@ -483,7 +483,7 @@ export function Step1Targets({
                       <td
                         className={cn(
                           "sticky left-10 z-[1] min-w-[120px] px-3 py-2 text-wedly-sub shadow-[1px_0_0_var(--wedly-bd)]",
-                          t.sendable ? "bg-white text-wedly-t1 group-hover:bg-wedly-bg-page" : "bg-wedly-bg-gray/50 text-wedly-t2",
+                          t.sendable ? "bg-white text-wedly-t1 group-hover:bg-wedly-bg-page" : "bg-wedly-bg-gray text-wedly-t2",
                         )}
                       >
                         {/* 긴 상호가 화면을 덮지 않게 안쪽 div 에서 줄임표로 자른다(2026-09-06 반려 3). */}
