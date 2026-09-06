@@ -710,13 +710,13 @@ export function Step3Confirm({
                   <table className="w-full min-w-[640px] border-collapse">
                     <thead className="text-wedly-tablehead">
                       <tr className="bg-wedly-accent text-left font-semibold text-white">
-                        <th scope="col" className="px-3 py-2.5">회사명</th>
-                        <th scope="col" className="px-3 py-2.5">대표명</th>
-                        {jobChat && <th scope="col" className="px-3 py-2.5">연락처</th>}
-                        {jobChat && <th scope="col" className="px-3 py-2.5">알림 상태</th>}
-                        {jobEmail && <th scope="col" className="px-3 py-2.5">이메일</th>}
-                        {jobEmail && <th scope="col" className="px-3 py-2.5">이메일 신호</th>}
-                        <th scope="col" className="px-3 py-2.5">실패한 이유</th>
+                        <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-2.5">회사명</th>
+                        <th scope="col" className="min-w-[72px] whitespace-nowrap px-3 py-2.5">대표명</th>
+                        {jobChat && <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-2.5">연락처</th>}
+                        {jobChat && <th scope="col" className="whitespace-nowrap px-3 py-2.5">알림 상태</th>}
+                        {jobEmail && <th scope="col" className="min-w-[220px] whitespace-nowrap px-3 py-2.5">이메일</th>}
+                        {jobEmail && <th scope="col" className="whitespace-nowrap px-3 py-2.5">이메일 신호</th>}
+                        <th scope="col" className="whitespace-nowrap px-3 py-2.5">실패한 이유</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -725,8 +725,8 @@ export function Step3Confirm({
                         const signal = emailSignalOf(r);
                         return (
                           <tr key={`${r.phone}-${i}`} className="border-t border-wedly-bd">
-                            <td className="min-w-0 px-3 py-2 text-wedly-sub text-wedly-t1 break-keep">{r.companyName || "—"}</td>
-                            <td className="px-3 py-2 text-wedly-sub text-wedly-t1 break-keep">{r.representative || "—"}</td>
+                            <td className="min-w-[120px] whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t1">{r.companyName || "—"}</td>
+                            <td className="min-w-[72px] whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t1">{r.representative || "—"}</td>
                             {jobChat && (
                               <td className="whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums text-wedly-t1">{r.phone || "—"}</td>
                             )}
@@ -737,7 +737,8 @@ export function Step3Confirm({
                               </td>
                             )}
                             {jobEmail && (
-                              <td className="min-w-0 px-3 py-2 text-wedly-sub text-wedly-t1 break-keep">
+                              // 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로(Step1·발송 기록과 같은 이유).
+                              <td className="min-w-[220px] break-all px-3 py-2 text-wedly-sub text-wedly-t1">
                                 {r.email || "—"}
                                 {/* 손으로 넣은 주소는 자료의 주소와 구별해 둔다(어디서 온 주소인지 남긴다). */}
                                 {r.emailSource === "manual" && (
@@ -752,7 +753,7 @@ export function Step3Confirm({
                                 {signal ? <Badge variant={signal.variant}>{signal.label}</Badge> : <span className="text-wedly-sub text-wedly-t2">—</span>}
                               </td>
                             )}
-                            <td className="min-w-0 px-3 py-2 text-wedly-sub text-wedly-t2 break-keep">
+                            <td className="whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t2">
                               {failureReasonOf(r)}
                             </td>
                           </tr>

@@ -110,6 +110,35 @@ describe("「직접 입력」을 여는 동안 다른 열이 눌리지 않는다
   });
 });
 
+describe("휴대폰 폭 표 머리글 — 열 제목이 세로로 안 쪼개진다(2026-09-06 시안)", () => {
+  // 실측(390px): 열 제목이 「회/사/명」처럼 한 글자씩 세로로 쪼개졌다 — th 전부 한 줄 고정으로 막는다.
+  it("표의 th 전부에 whitespace-nowrap 이 있다", () => {
+    const out = draw();
+    const ths = out.match(/<th(?:\s[^>]*)?>/g) ?? [];
+    expect(ths.length).toBeGreaterThan(0);
+    for (const th of ths) {
+      expect(th, `th 태그 「${th}」`).toContain("whitespace-nowrap");
+    }
+  });
+
+  it("회사명 th·td 가 체크박스 열 폭만큼 왼쪽에 고정된다", () => {
+    const out = draw();
+    const thAt = out.indexOf(">회사명<");
+    expect(thAt, "회사명 th").toBeGreaterThan(0);
+    const thTag = out.slice(out.lastIndexOf("<th", thAt), thAt);
+    expect(thTag).toContain("sticky");
+    expect(thTag).toContain("left-10");
+
+    // 회사명은 체크박스의 aria-label(「(주)한빛정밀 고르기」)에도 나오므로, 태그 내용으로만 찾는다.
+    const companyText = ">(주)한빛정밀<";
+    const valueAt = out.indexOf(companyText);
+    expect(valueAt, "회사명 값 칸").toBeGreaterThan(0);
+    const tdTag = out.slice(out.lastIndexOf("<td", valueAt), valueAt);
+    expect(tdTag).toContain("sticky");
+    expect(tdTag).toContain("left-10");
+  });
+});
+
 describe("발송 열 딱지 — 낱말 중간에서 끊기지 않는다(2026-09-06 반려 5)", () => {
   /** 딱지 글자 바로 앞의 여는 태그들을 꺼낸다(딱지는 알약 span + 색 점 span 으로 그려진다). */
   function tagsBefore(html: string, label: string): string {

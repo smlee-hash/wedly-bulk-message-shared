@@ -317,6 +317,23 @@ describe("★알림톡·채팅 전용 발송은 예전 그대로다(회귀 0)", 
   });
 });
 
+describe("휴대폰 폭 표 머리글 — 발송 현황 수신자 표(2026-09-06 시안)", () => {
+  // 실측(390px): 열 제목이 세로로 쪼개졌다 — th 전부 한 줄 고정으로 막는다(이메일 단독·둘 다 모두).
+  it("표의 th 전부에 whitespace-nowrap 이 있다", () => {
+    for (const over of [
+      { jobId: "job_1", progress: progress() },
+      { channel: "both" as const, jobId: "job_1", progress: progress({ channelChat: true, channelEmail: true }) },
+    ]) {
+      const markup = html(over);
+      const ths = markup.match(/<th(?:\s[^>]*)?>/g) ?? [];
+      expect(ths.length, JSON.stringify(over)).toBeGreaterThan(0);
+      for (const th of ths) {
+        expect(th, `th 태그 「${th}」`).toContain("whitespace-nowrap");
+      }
+    }
+  });
+});
+
 describe("확인 모달 — 브라우저 confirm 을 쓰지 않는다", () => {
   it("보내기 확인은 이메일 인원과 0원을 적는다", () => {
     const markup = html({ confirmOpen: true });

@@ -398,11 +398,14 @@ export function Step1Targets({
           )}
 
           <div className="max-h-[440px] overflow-auto rounded-2xl border border-wedly-bd" aria-busy={loadingTargets}>
-            <table className="w-full min-w-[720px] border-collapse">
+            {/* ★휴대폰 폭(390px) 실측(2026-09-06): 열 최소 폭 합(체크박스 40+회사명 120+대표명 72+
+                연락처 120+이메일 280+계약일 96+진행상태 88+담당 72+발송 150=1038)보다 표 폭이 작으면
+                안 됨 — 720 은 그 합보다 작아 헤더가 눌렸다. */}
+            <table className="w-full min-w-[1040px] border-collapse">
               {/* 표 머리 글자 크기는 머리 묶음이 정한다 — 줄·칸에 크기를 적으면 그것이 이겨서 층이 어긋난다 */}
               <thead className="text-wedly-tablehead">
                 <tr className="bg-wedly-accent text-left font-semibold text-white">
-                  <th scope="col" className="sticky top-0 z-10 w-10 bg-wedly-accent px-3 py-2.5">
+                  <th scope="col" className="sticky top-0 left-0 z-20 w-10 whitespace-nowrap bg-wedly-accent px-3 py-2.5">
                     <Checkbox
                       checked={allChecked}
                       onChange={toggleAll}
@@ -410,18 +413,22 @@ export function Step1Targets({
                       aria-label="보낼 수 있는 사람 전체 고르기"
                     />
                   </th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">회사명</th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">대표명</th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">연락처</th>
+                  {/* ★회사명도 왼쪽에 고정한다(체크박스 열 폭 40px=left-10) — 가로로 끌어도
+                      「누구 줄인지」가 안 사라지게. z-20 은 이 줄의 다른 th(z-10)보다 위에 그리기 위함
+                      (안 그러면 세로 고정 머리 위에서 뒤 열이 이 열을 덮어 비쳐 보인다). */}
+                  <th scope="col" className="sticky top-0 left-10 z-20 min-w-[120px] whitespace-nowrap bg-wedly-accent px-3 py-2.5 shadow-[1px_0_0_var(--wedly-bd)]">회사명</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[72px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">대표명</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[120px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">연락처</th>
                   {emailShown && (
-                    // 「직접 입력」을 여는 동안에도 이 열이 다른 열을 밀지 않게 최소 폭을 준다.
-                    <th scope="col" className="sticky top-0 z-10 min-w-[280px] bg-wedly-accent px-3 py-2.5">이메일</th>
+                    // 「직접 입력」을 여는 동안에도 이 열이 다른 열을 밀지 않게 최소 폭을 준다(1280px 실측 —
+                    // 휴대폰 시안 값(220px)보다 넓게 유지해야 이 방어가 안 깨진다).
+                    <th scope="col" className="sticky top-0 z-10 min-w-[280px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">이메일</th>
                   )}
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">계약일</th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">진행상태</th>
-                  <th scope="col" className="sticky top-0 z-10 bg-wedly-accent px-3 py-2.5">담당</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[96px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">계약일</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[88px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">진행상태</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[72px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">담당</th>
                   {/* 딱지가 한 줄로 서려면 이 열이 그만큼은 있어야 한다(「번호 없음 · 이메일 없음」 기준). */}
-                  <th scope="col" className="sticky top-0 z-10 min-w-[150px] bg-wedly-accent px-3 py-2.5">발송</th>
+                  <th scope="col" className="sticky top-0 z-10 min-w-[150px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">발송</th>
                 </tr>
               </thead>
               <tbody>
@@ -457,7 +464,12 @@ export function Step1Targets({
                         refunded && t.sendable && "shadow-[inset_3px_0_0_var(--wedly-red)]",
                       )}
                     >
-                      <td className="px-3 py-2 align-middle">
+                      <td
+                        className={cn(
+                          "sticky left-0 z-[1] px-3 py-2 align-middle",
+                          t.sendable ? "bg-white" : "bg-wedly-bg-gray/50",
+                        )}
+                      >
                         <Checkbox
                           checked={picked.has(keyOf(t))}
                           disabled={!t.sendable}
@@ -465,10 +477,15 @@ export function Step1Targets({
                           aria-label={`${t.companyName || displayPhone(t)} 고르기`}
                         />
                       </td>
-                      <td className={cn("min-w-0 px-3 py-2 text-wedly-sub break-keep", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                      <td
+                        className={cn(
+                          "sticky left-10 z-[1] min-w-[120px] whitespace-nowrap px-3 py-2 text-wedly-sub shadow-[1px_0_0_var(--wedly-bd)]",
+                          t.sendable ? "bg-white text-wedly-t1" : "bg-wedly-bg-gray/50 text-wedly-t2",
+                        )}
+                      >
                         {t.companyName || "—"}
                       </td>
-                      <td className={cn("px-3 py-2 text-wedly-sub break-keep", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                      <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.representative || "—"}
                       </td>
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
@@ -491,7 +508,7 @@ export function Step1Targets({
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.contractDate || "—"}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="whitespace-nowrap px-3 py-2">
                         {refunded ? (
                           <Badge variant="red">환불 {t.refundedAt}</Badge>
                         ) : statusBadges.length > 0 ? (
@@ -506,10 +523,10 @@ export function Step1Targets({
                           <span className="text-wedly-hint text-wedly-t2">—</span>
                         )}
                       </td>
-                      <td className={cn("px-3 py-2 text-wedly-sub break-keep", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
+                      <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.manager || "—"}
                       </td>
-                      <td className="min-w-[150px] px-3 py-2">
+                      <td className="min-w-[150px] whitespace-nowrap px-3 py-2">
                         {/* ★사유 글자와 칩 색이 같은 값에서 나온다(excludeChipVariant) — 색이 거짓말을 하지 않게.
                             줄의 sendable·excludeReason 은 고른 채널 기준으로 이미 갈아 끼운 값이다. */}
                         {/* ★딱지 글자는 한 줄로 세운다 — 1280px 실측에서 「발송 가 / 능」으로 끊겼다. */}

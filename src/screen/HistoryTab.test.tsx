@@ -186,6 +186,86 @@ describe("머리·구간 단추·검색창", () => {
   });
 });
 
+describe("휴대폰 폭 표 머리글 — 네 표 모두 열 제목이 세로로 안 쪼개진다(2026-09-06 시안)", () => {
+  // 실측(390px): 열 제목이 세로로 쪼개지고, 1280px 에서도 「받는 사/람」이 됐다 — th 전부 한 줄 고정.
+  function thTags(markup: string): string[] {
+    return markup.match(/<th(?:\s[^>]*)?>/g) ?? [];
+  }
+
+  it("발송별·사업장별·발송상세·회사상세 표의 th 전부에 whitespace-nowrap 이 있다", () => {
+    const detail: HistoryCompanyDetail = {
+      key: "b:1234567890",
+      companyName: "(주)한빛정밀",
+      representative: "김대표",
+      phone: "010-2•••-4567",
+      email: "ha***@hanbit.kr",
+      bizNo: "1234567890",
+      sourceRowId: "",
+      items: [companyItem()],
+    };
+    const views: Array<Partial<HistoryTabProps>> = [
+      { mode: "jobs", view: "list" },
+      { mode: "companies", view: "list" },
+      { view: "job", job: job(), jobRecipients: [recipient()] },
+      { view: "company", company: detail },
+    ];
+    for (const over of views) {
+      const markup = draw(over);
+      const ths = thTags(markup);
+      expect(ths.length, `보기 ${JSON.stringify(over.view ?? over.mode)}의 th 개수`).toBeGreaterThan(0);
+      for (const th of ths) {
+        expect(th, `th 태그 「${th}」`).toContain("whitespace-nowrap");
+      }
+    }
+  });
+
+  it("발송별 「제목 / 안내」와 사업장별 「회사명」은 왼쪽에 고정된다", () => {
+    const jobsHtml = draw({ mode: "jobs", view: "list" });
+    const titleThAt = jobsHtml.indexOf(">제목 / 안내<");
+    expect(titleThAt, "제목/안내 th").toBeGreaterThan(0);
+    const titleThTag = jobsHtml.slice(jobsHtml.lastIndexOf("<th", titleThAt), titleThAt);
+    expect(titleThTag).toContain("sticky");
+    expect(titleThTag).toContain("left-0");
+
+    const titleValueAt = jobsHtml.indexOf("장려금 2차 서류 제출 안내");
+    expect(titleValueAt, "제목 값 칸").toBeGreaterThan(0);
+    const titleTdTag = jobsHtml.slice(jobsHtml.lastIndexOf("<td", titleValueAt), titleValueAt);
+    expect(titleTdTag).toContain("sticky");
+    expect(titleTdTag).toContain("line-clamp-2");
+
+    const companiesHtml = draw({ mode: "companies", view: "list" });
+    const companyThAt = companiesHtml.indexOf(">회사명<");
+    expect(companyThAt, "회사명 th").toBeGreaterThan(0);
+    const companyThTag = companiesHtml.slice(companiesHtml.lastIndexOf("<th", companyThAt), companyThAt);
+    expect(companyThTag).toContain("sticky");
+    expect(companyThTag).toContain("left-0");
+
+    const companyValueAt = companiesHtml.indexOf("(주)한빛정밀");
+    expect(companyValueAt, "회사명 값 칸").toBeGreaterThan(0);
+    const companyTdTag = companiesHtml.slice(companiesHtml.lastIndexOf("<td", companyValueAt), companyValueAt);
+    expect(companyTdTag).toContain("sticky");
+  });
+
+  it("회사 상세 표의 「제목 / 안내」는 고정 없이도 두 줄까지 줄바꿈 폭을 가진다", () => {
+    const detail: HistoryCompanyDetail = {
+      key: "b:1234567890",
+      companyName: "(주)한빛정밀",
+      representative: "김대표",
+      phone: "010-2•••-4567",
+      email: "ha***@hanbit.kr",
+      bizNo: "1234567890",
+      sourceRowId: "",
+      items: [companyItem()],
+    };
+    const html = draw({ view: "company", company: detail });
+    const titleValueAt = html.indexOf("장려금 2차 서류 제출 안내");
+    expect(titleValueAt, "제목 값 칸").toBeGreaterThan(0);
+    const titleTdTag = html.slice(html.lastIndexOf("<td", titleValueAt), titleValueAt);
+    expect(titleTdTag).toContain("line-clamp-2");
+    expect(titleTdTag).toContain("max-w-[320px]");
+  });
+});
+
 describe("발송별 표", () => {
   it("시안의 열이 다 있다", () => {
     const html = draw();

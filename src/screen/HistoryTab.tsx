@@ -75,10 +75,17 @@ function Num({ value, shown }: { value: number; shown: boolean }) {
   return <>{won(value)}</>;
 }
 
-const TH = "sticky top-0 z-10 bg-wedly-accent px-3 py-2.5";
+// ★휴대폰 폭(390px) 실측(2026-09-06): 열 제목이 세로로 쪼개지고, 1280px 에서도 「받는 사/람」이 됐다
+//  — th 전부 한 줄 고정(whitespace-nowrap)으로 막는다. 짧은 값 칸(TD_NUM 등)도 같은 이유로 고정한다.
+const TH = "sticky top-0 z-10 whitespace-nowrap bg-wedly-accent px-3 py-2.5";
 const TH_NUM = `${TH} text-right`;
+/** 발송별 표의 「제목 / 안내」 — 뜻이 있는 첫 열이라 왼쪽에 고정한다(길 수 있어 두 줄까지 줄바꿈 허용).
+ *  z-20 은 이 줄의 다른 th(z-10)보다 위에 그리기 위함 — 안 그러면 가로로 끌 때 뒤 열이 이 열을 덮는다. */
+const TH_STICKY_TITLE = cn(TH, "left-0 z-20 min-w-[200px] max-w-[320px] shadow-[1px_0_0_var(--wedly-bd)]");
+/** 사업장별 표의 「회사명」 — 첫 열이자 짧은 값이라 한 줄로 고정한다(제목/안내와 달리 줄바꿈 없음). */
+const TH_STICKY_COMPANY = cn(TH, "left-0 z-20 min-w-[120px] shadow-[1px_0_0_var(--wedly-bd)]");
 const TD = "px-3 py-2 text-wedly-sub text-wedly-t1";
-const TD_NUM = "px-3 py-2 text-wedly-sub text-wedly-t1 text-right tabular-nums";
+const TD_NUM = "whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t1 text-right tabular-nums";
 
 /** 불러오는 동안의 자리지킴 — 표 칸이 흔들리지 않게 같은 칸 수로 그린다. */
 function TableSkeleton({ cols, rows = 4 }: { cols: number; rows?: number }) {
@@ -316,12 +323,12 @@ export function HistoryTab({
                 <th scope="col" className={TH}>보낸 시각</th>
                 <th scope="col" className={TH}>보낸 사람</th>
                 <th scope="col" className={TH}>채널</th>
-                <th scope="col" className={TH}>제목 / 안내</th>
-                <th scope="col" className={TH_NUM}>받는 사람</th>
-                <th scope="col" className={TH_NUM}>도착</th>
-                <th scope="col" className={TH_NUM}>확인</th>
-                <th scope="col" className={TH_NUM}>열어 봄</th>
-                <th scope="col" className={TH_NUM}>반송·거부</th>
+                <th scope="col" className={TH_STICKY_TITLE}>제목 / 안내</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[80px]")}>받는 사람</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[64px]")}>도착</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[64px]")}>확인</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[72px]")}>열어 봄</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[80px]")}>반송·거부</th>
                 <th scope="col" className={TH}>앱</th>
               </tr>
             </thead>
@@ -350,9 +357,11 @@ export function HistoryTab({
                       className="cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
                     >
                       <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{formatHistoryTime(j.createdAt)}</td>
-                      <td className={cn(TD, "break-keep")}>{j.senderName || "—"}</td>
-                      <td className="px-3 py-2"><Channel badges={badges} /></td>
-                      <td className={cn(TD, "min-w-0 break-keep")}>{j.title || "—"}</td>
+                      <td className={cn(TD, "whitespace-nowrap")}>{j.senderName || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2"><Channel badges={badges} /></td>
+                      {/* ★제목/안내 열도 왼쪽에 고정 — 나머지(채널·시각 등)를 가로로 넘겨도 「무슨 발송인지」가
+                          안 사라지게. 길 수 있어 min-w/max-w 로 폭을 가두고 두 줄까지만 보인다(line-clamp-2). */}
+                      <td className={cn(TD, "sticky left-0 z-[1] min-w-[200px] max-w-[320px] break-keep line-clamp-2 bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>{j.title || "—"}</td>
                       <td className={TD_NUM}>{won(j.total)}</td>
                       <td className={TD_NUM}><Num value={j.delivered} shown={hasEmail} /></td>
                       <td className={TD_NUM}><Num value={j.viewed} shown={hasEmail} /></td>
@@ -378,11 +387,11 @@ export function HistoryTab({
           <TableBox min="min-w-[860px]">
             <thead className="text-wedly-tablehead">
               <tr className="bg-wedly-accent text-left font-semibold text-white">
-                <th scope="col" className={TH}>회사명</th>
-                <th scope="col" className={TH}>대표명</th>
-                <th scope="col" className={TH}>연락처</th>
-                <th scope="col" className={TH}>이메일</th>
-                <th scope="col" className={TH_NUM}>받은 안내</th>
+                <th scope="col" className={TH_STICKY_COMPANY}>회사명</th>
+                <th scope="col" className={cn(TH, "min-w-[72px]")}>대표명</th>
+                <th scope="col" className={cn(TH, "min-w-[120px]")}>연락처</th>
+                <th scope="col" className={cn(TH, "min-w-[220px]")}>이메일</th>
+                <th scope="col" className={cn(TH_NUM, "min-w-[72px]")}>받은 안내</th>
                 <th scope="col" className={TH}>마지막 수신</th>
                 <th scope="col" className={TH}>마지막 신호</th>
               </tr>
@@ -406,14 +415,15 @@ export function HistoryTab({
                     }}
                     className="cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
                   >
-                    <td className={cn(TD, "min-w-0 font-semibold break-keep")}>{c.companyName || "—"}</td>
-                    <td className={cn(TD, "break-keep")}>{c.representative || "—"}</td>
+                    {/* ★회사명도 왼쪽에 고정 — 나머지를 가로로 넘겨도 「어느 회사인지」가 안 사라지게. */}
+                    <td className={cn(TD, "sticky left-0 z-[1] min-w-[120px] whitespace-nowrap font-semibold bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>{c.companyName || "—"}</td>
+                    <td className={cn(TD, "whitespace-nowrap")}>{c.representative || "—"}</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{c.phone || "—"}</td>
                     {/* 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로. */}
-                    <td className={cn(TD, "min-w-0 break-all")}>{c.email || "—"}</td>
+                    <td className={cn(TD, "min-w-[220px] break-all")}>{c.email || "—"}</td>
                     <td className={TD_NUM}>{won(c.count)}건</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{formatHistoryTime(c.lastReceivedAt)}</td>
-                    <td className="px-3 py-2"><Signal badge={signalBadge(c.lastSignal)} /></td>
+                    <td className="whitespace-nowrap px-3 py-2"><Signal badge={signalBadge(c.lastSignal)} /></td>
                   </tr>
                 ))
               )}
@@ -437,10 +447,10 @@ export function HistoryTab({
           <TableBox min="min-w-[880px]">
             <thead className="text-wedly-tablehead">
               <tr className="bg-wedly-accent text-left font-semibold text-white">
-                <th scope="col" className={TH}>회사명</th>
-                <th scope="col" className={TH}>대표명</th>
-                <th scope="col" className={TH}>연락처</th>
-                <th scope="col" className={TH}>이메일</th>
+                <th scope="col" className={cn(TH, "min-w-[120px]")}>회사명</th>
+                <th scope="col" className={cn(TH, "min-w-[72px]")}>대표명</th>
+                <th scope="col" className={cn(TH, "min-w-[120px]")}>연락처</th>
+                <th scope="col" className={cn(TH, "min-w-[220px]")}>이메일</th>
                 <th scope="col" className={TH}>신호</th>
                 <th scope="col" className={TH}>마지막 신호</th>
                 <th scope="col" className={TH}>
@@ -460,10 +470,10 @@ export function HistoryTab({
               ) : (
                 jobRecipients.map((r, i) => (
                   <tr key={r.id || `${r.phone}-${i}`} className="border-t border-wedly-bd">
-                    <td className={cn(TD, "min-w-0 break-keep")}>{r.companyName || "—"}</td>
-                    <td className={cn(TD, "break-keep")}>{r.representative || "—"}</td>
+                    <td className={cn(TD, "min-w-[120px] whitespace-nowrap")}>{r.companyName || "—"}</td>
+                    <td className={cn(TD, "whitespace-nowrap")}>{r.representative || "—"}</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{r.phone || "—"}</td>
-                    <td className={cn(TD, "min-w-0 break-all")}>{r.email || "—"}</td>
+                    <td className={cn(TD, "min-w-[220px] break-all")}>{r.email || "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2"><Signal badge={rowSignalBadge(r)} /></td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums text-wedly-t2")}>
                       {formatHistoryTime(lastSignalAt(r))}
@@ -521,7 +531,7 @@ export function HistoryTab({
               <tr className="bg-wedly-accent text-left font-semibold text-white">
                 <th scope="col" className={TH}>받은 시각</th>
                 <th scope="col" className={TH}>채널</th>
-                <th scope="col" className={TH}>제목 / 안내</th>
+                <th scope="col" className={cn(TH, "min-w-[200px] max-w-[320px]")}>제목 / 안내</th>
                 <th scope="col" className={TH}>보낸 사람</th>
                 <th scope="col" className={TH}>신호</th>
                 <th scope="col" className={TH}>주소 출처</th>
@@ -541,9 +551,9 @@ export function HistoryTab({
                 company.items.map((it, i) => (
                   <tr key={`${it.jobId}-${i}`} className="border-t border-wedly-bd">
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{formatHistoryTime(it.createdAt)}</td>
-                    <td className="px-3 py-2"><Channel badges={channelBadges(it.channel)} /></td>
-                    <td className={cn(TD, "min-w-0 break-keep")}>{it.title || "—"}</td>
-                    <td className={cn(TD, "break-keep")}>{it.senderName || "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2"><Channel badges={channelBadges(it.channel)} /></td>
+                    <td className={cn(TD, "min-w-[200px] max-w-[320px] break-keep line-clamp-2")}>{it.title || "—"}</td>
+                    <td className={cn(TD, "whitespace-nowrap")}>{it.senderName || "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2"><Signal badge={rowSignalBadge(it)} /></td>
                     <td className={cn(TD, "whitespace-nowrap text-wedly-t2")}>
                       {emailSourceLabel(it.emailSource, it.channel)}
