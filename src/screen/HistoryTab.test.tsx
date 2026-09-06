@@ -128,10 +128,7 @@ function props(over: Partial<HistoryTabProps> = {}): HistoryTabProps {
     openCompanyMail: () => {},
     closeMail: () => {},
     retryMail: () => {},
-    timeline: null,
     openTimeline: () => {},
-    closeTimeline: () => {},
-    retryTimeline: () => {},
     ...over,
   };
 }
@@ -709,25 +706,12 @@ describe("발송 상세 — 줄마다 「기록」 단추", () => {
     expect(html).toContain("이 회사의 다른 발송");
   });
 
-  it("타임라인 모달은 열려 있을 때만 그려진다", () => {
+  it("타임라인 모달은 이 판에서 그리지 않는다(2026-09-07 QA 결함 수정) — 화면 껍데기가 탭과 무관하게 한 번만 그린다", () => {
+    // 예전엔 이 판이 timeline prop 을 받아 모달까지 그렸다 — 3단계에서 열어도 이 탭이 아니면
+    // 안 보였다. 이제 이 판은 여는 단추(openTimeline)만 갖고, 실제 모달은 BulkMessageScreen.tsx 가
+    // 한 번만 그린다(그 쪽 시험: BulkMessageScreen.timeline-modal.test.tsx).
+    // HistoryTabProps 에 timeline·closeTimeline·retryTimeline 이 더는 없다는 것 자체도 증거다 —
+    // props() 가 그 셋 없이 타입 검사를 통과해 완전한 HistoryTabProps 를 만든다(위 props() 참고).
     expect(draw({ ...base, jobRecipients: [recipient()] })).not.toContain("이메일 기록 —");
-    const open = draw({
-      ...base,
-      jobRecipients: [recipient()],
-      timeline: {
-        recipientId: "r1",
-        companyName: "(주)한빛정밀",
-        emailMasked: "ha***@hanbit.kr",
-        emailSource: "basic",
-        subject: "장려금 2차 서류 제출 안내",
-        senderName: "김민수",
-        jobCreatedAt: "2026-09-04T01:12:00.000Z",
-        items: [],
-        loading: false,
-        error: "",
-      },
-    });
-    expect(open).toContain("이메일 기록 — (주)한빛정밀");
-    expect(open).toContain("아직 기록이 없어요");
   });
 });

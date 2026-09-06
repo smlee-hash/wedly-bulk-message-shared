@@ -17,7 +17,6 @@ import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
 import { won } from "./bulk-ui";
 import { HistoryMailModal } from "./HistoryMailModal";
-import { HistoryTimelineModal } from "./HistoryTimelineModal";
 import {
   HISTORY_MODE_OPTIONS,
   HISTORY_SEARCH_PLACEHOLDER,
@@ -44,7 +43,6 @@ import {
   type HistoryJobRow,
   type HistoryMailState,
   type HistoryMode,
-  type HistoryTimelineState,
 } from "./history-helpers";
 
 /* ────────────────────────────── 작은 조각 ────────────────────────────── */
@@ -213,11 +211,8 @@ export interface HistoryTabProps {
   openCompanyMail: (item: HistoryCompanyItem) => void;
   closeMail: () => void;
   retryMail: () => void;
-  /** 「기록」 모달 — `null` 이면 닫힘(서식 모달과 같은 방식). */
-  timeline: HistoryTimelineState | null;
+  /** 「기록」 단추 — 실제 모달은 화면 껍데기(BulkMessageScreen.tsx)가 탭과 무관하게 한 번만 그린다. */
   openTimeline: (r: HistoryJobRecipient) => void;
-  closeTimeline: () => void;
-  retryTimeline: () => void;
 }
 
 export function HistoryTab({
@@ -244,10 +239,7 @@ export function HistoryTab({
   openCompanyMail,
   closeMail,
   retryMail,
-  timeline,
   openTimeline,
-  closeTimeline,
-  retryTimeline,
 }: HistoryTabProps) {
   // 회사 이력 표 「제목 / 안내」 — 눌러서 펼친 줄의 열쇠(jobId-인덱스). 서식 잠금과는 별개 상태다.
   const [expandedTitleKey, setExpandedTitleKey] = useState<string | null>(null);
@@ -673,8 +665,9 @@ export function HistoryTab({
       {/* 서식 보기 — 어느 판에서 눌러도 이 하나가 뜬다. */}
       <HistoryMailModal mail={mail} onClose={closeMail} onRetry={retryMail} />
 
-      {/* 신호 기록(타임라인) — 서식 모달과 나란히, 한 번에 하나만 열린다. */}
-      <HistoryTimelineModal timeline={timeline} onClose={closeTimeline} onRetry={retryTimeline} />
+      {/* 신호 기록(타임라인) 모달은 여기서 그리지 않는다 — 화면 껍데기(BulkMessageScreen.tsx)가
+          탭(view)과 무관하게 한 번만 그린다(2026-09-07 QA 결함: 3단계에서 열어도 이 탭이 아니면
+          안 떴다). 여는 단추(openTimeline)만 이 판에 남는다. */}
     </Card>
   );
 }

@@ -19,6 +19,7 @@ import { Step2Chat } from "./steps/Step2Chat";
 import { Step2Email } from "./steps/Step2Email";
 import { Step3Confirm } from "./steps/Step3Confirm";
 import { HistoryTab } from "./HistoryTab";
+import { HistoryTimelineModal } from "./HistoryTimelineModal";
 
 // ────────────────────────────────────────────────────────────── 단계 표시
 
@@ -406,10 +407,7 @@ export default function BulkMessageScreen() {
             openCompanyMail={s.openHistoryCompanyMail}
             closeMail={s.closeHistoryMail}
             retryMail={s.retryHistoryMail}
-            timeline={s.historyTimeline}
             openTimeline={s.openHistoryTimeline}
-            closeTimeline={s.closeHistoryTimeline}
-            retryTimeline={s.retryHistoryTimeline}
             closeDetail={s.closeHistoryDetail}
             retry={s.retryHistory}
           />
@@ -420,6 +418,16 @@ export default function BulkMessageScreen() {
       <div role="tabpanel" id="bulk-pane-manual" aria-labelledby="bulk-tab-manual" hidden={view !== "manual"}>
         <BulkMessageManual />
       </div>
+
+      {/* 신호 기록(타임라인) 모달 — 탭(view)과 무관하게 여기서 한 번만 그린다.
+          ★2026-09-07 QA 결함: 예전엔 HistoryTab.tsx 안에서만 그려 발송 기록 탭을 볼 때만 나타났다.
+          3단계 「기록 N건」 단추(openSendTimeline)를 눌러도 다른 탭이라 모달이 안 떴다 — 상태·닫기는
+          useBulkState 의 기존 것(historyTimeline·closeHistoryTimeline·retryHistoryTimeline)을 그대로 쓴다. */}
+      <HistoryTimelineModal
+        timeline={s.historyTimeline}
+        onClose={s.closeHistoryTimeline}
+        onRetry={s.retryHistoryTimeline}
+      />
     </>
   );
 }
