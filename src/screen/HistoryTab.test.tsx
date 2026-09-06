@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HistoryTab, type HistoryTabProps } from "./HistoryTab";
+import { HistoryTab, historyTitleClamp, type HistoryTabProps } from "./HistoryTab";
 import type {
   HistoryCompanyDetail,
   HistoryCompanyItem,
@@ -192,6 +192,16 @@ describe("휴대폰 폭 표 머리글 — 네 표 모두 열 제목이 세로로
     return markup.match(/<th(?:\s[^>]*)?>/g) ?? [];
   }
 
+  /** 어떤 텍스트 바로 앞의 여는 태그(`<td ...>` 등) 하나만 뽑는다 — 자식 태그까지 섞이는
+   *  slice-to-text 방식과 달리 이 태그 자신의 class 만 검사한다(2026-09-06 코덱스 반려 1: line-clamp-2 가
+   *  td 에 직접 붙어 있어도 slice-to-text 검사로는 안 걸렸다 — display:-webkit-box 로 칸 배치가 깨졌다). */
+  function openTag(markup: string, tagName: string, beforeIdx: number): string {
+    const start = markup.lastIndexOf(`<${tagName}`, beforeIdx);
+    expect(start, `<${tagName}> 시작 위치(기준 ${beforeIdx})`).toBeGreaterThan(-1);
+    const end = markup.indexOf(">", start);
+    return markup.slice(start, end + 1);
+  }
+
   it("발송별·사업장별·발송상세·회사상세 표의 th 전부에 whitespace-nowrap 이 있다", () => {
     const detail: HistoryCompanyDetail = {
       key: "b:1234567890",
@@ -219,34 +229,66 @@ describe("휴대폰 폭 표 머리글 — 네 표 모두 열 제목이 세로로
     }
   });
 
-  it("발송별 「제목 / 안내」와 사업장별 「회사명」은 왼쪽에 고정된다", () => {
+  it("발송별 「제목 / 안내」는 왼쪽에 고정되고, line-clamp-2 는 td 가 아니라 안쪽 div 에만 있다(반려 1·3)", () => {
     const jobsHtml = draw({ mode: "jobs", view: "list" });
     const titleThAt = jobsHtml.indexOf(">제목 / 안내<");
     expect(titleThAt, "제목/안내 th").toBeGreaterThan(0);
-    const titleThTag = jobsHtml.slice(jobsHtml.lastIndexOf("<th", titleThAt), titleThAt);
+    const titleThTag = openTag(jobsHtml, "th", titleThAt);
     expect(titleThTag).toContain("sticky");
     expect(titleThTag).toContain("left-0");
 
     const titleValueAt = jobsHtml.indexOf("장려금 2차 서류 제출 안내");
     expect(titleValueAt, "제목 값 칸").toBeGreaterThan(0);
-    const titleTdTag = jobsHtml.slice(jobsHtml.lastIndexOf("<td", titleValueAt), titleValueAt);
+    const titleTdTag = openTag(jobsHtml, "td", titleValueAt);
     expect(titleTdTag).toContain("sticky");
-    expect(titleTdTag).toContain("line-clamp-2");
+    // ★반려 1 핵심 — line-clamp 가 td 자체에 있으면 display:-webkit-box 가 되어 칸 배치가 깨진다.
+    expect(titleTdTag).not.toContain("line-clamp");
+    const titleDivTag = openTag(jobsHtml, "div", titleValueAt);
+    expect(titleDivTag).toContain("line-clamp-2");
+    expect(titleDivTag).toContain("max-w-[220px]");
+    expect(titleDivTag).toContain('title="장려금 2차 서류 제출 안내"');
+  });
 
+  it("사업장별 「회사명」은 왼쪽에 고정되고, 긴 상호는 안쪽 div 에서 줄임표로 잘린다(반려 2·3)", () => {
     const companiesHtml = draw({ mode: "companies", view: "list" });
     const companyThAt = companiesHtml.indexOf(">회사명<");
     expect(companyThAt, "회사명 th").toBeGreaterThan(0);
-    const companyThTag = companiesHtml.slice(companiesHtml.lastIndexOf("<th", companyThAt), companyThAt);
+    const companyThTag = openTag(companiesHtml, "th", companyThAt);
     expect(companyThTag).toContain("sticky");
     expect(companyThTag).toContain("left-0");
 
     const companyValueAt = companiesHtml.indexOf("(주)한빛정밀");
     expect(companyValueAt, "회사명 값 칸").toBeGreaterThan(0);
-    const companyTdTag = companiesHtml.slice(companiesHtml.lastIndexOf("<td", companyValueAt), companyValueAt);
+    const companyTdTag = openTag(companiesHtml, "td", companyValueAt);
     expect(companyTdTag).toContain("sticky");
+    const companyDivTag = openTag(companiesHtml, "div", companyValueAt);
+    expect(companyDivTag).toContain("max-w-[160px]");
+    expect(companyDivTag).toContain("truncate");
+    expect(companyDivTag).toContain('title="(주)한빛정밀"');
   });
 
-  it("회사 상세 표의 「제목 / 안내」는 고정 없이도 두 줄까지 줄바꿈 폭을 가진다", () => {
+  it("발송 상세 수신자 표의 「회사명」도 같은 방식으로 왼쪽에 고정된다(반려 2)", () => {
+    const jobHtml = draw({
+      view: "job",
+      job: job(),
+      jobRecipients: [recipient({ companyName: "(주)한빛정밀" })],
+    });
+    const thAt = jobHtml.indexOf(">회사명<");
+    expect(thAt, "회사명 th").toBeGreaterThan(0);
+    const thTag = openTag(jobHtml, "th", thAt);
+    expect(thTag).toContain("sticky");
+    expect(thTag).toContain("left-0");
+
+    const valueAt = jobHtml.indexOf("(주)한빛정밀");
+    expect(valueAt, "회사명 값 칸").toBeGreaterThan(0);
+    const tdTag = openTag(jobHtml, "td", valueAt);
+    expect(tdTag).toContain("sticky");
+    const divTag = openTag(jobHtml, "div", valueAt);
+    expect(divTag).toContain("max-w-[160px]");
+    expect(divTag).toContain("truncate");
+  });
+
+  it("회사 상세 표의 「제목 / 안내」도 왼쪽에 고정되고, line-clamp-2 는 안쪽 div 에만 있다(반려 1·2·3)", () => {
     const detail: HistoryCompanyDetail = {
       key: "b:1234567890",
       companyName: "(주)한빛정밀",
@@ -258,11 +300,63 @@ describe("휴대폰 폭 표 머리글 — 네 표 모두 열 제목이 세로로
       items: [companyItem()],
     };
     const html = draw({ view: "company", company: detail });
+    const thAt = html.indexOf(">제목 / 안내<");
+    expect(thAt, "제목/안내 th").toBeGreaterThan(0);
+    const thTag = openTag(html, "th", thAt);
+    expect(thTag).toContain("sticky");
+    expect(thTag).toContain("left-0");
+
     const titleValueAt = html.indexOf("장려금 2차 서류 제출 안내");
     expect(titleValueAt, "제목 값 칸").toBeGreaterThan(0);
-    const titleTdTag = html.slice(html.lastIndexOf("<td", titleValueAt), titleValueAt);
-    expect(titleTdTag).toContain("line-clamp-2");
+    const titleTdTag = openTag(html, "td", titleValueAt);
+    expect(titleTdTag).toContain("sticky");
     expect(titleTdTag).toContain("max-w-[320px]");
+    expect(titleTdTag).not.toContain("line-clamp");
+    const titleDivTag = openTag(html, "div", titleValueAt);
+    expect(titleDivTag).toContain("line-clamp-2");
+    expect(titleDivTag).toContain("max-w-[220px]");
+    expect(titleDivTag).toContain('title="장려금 2차 서류 제출 안내"');
+  });
+
+  it("발송별·사업장별 고정 셀은 행 hover 색을 함께 받는다 — 불투명 배경이 hover 를 안 가린다(반려 4)", () => {
+    const jobsHtml = draw({ mode: "jobs", view: "list" });
+    const jobTitleAt = jobsHtml.indexOf("장려금 2차 서류 제출 안내");
+    const jobTrTag = openTag(jobsHtml, "tr", jobTitleAt);
+    expect(jobTrTag).toContain("group");
+    const jobTdTag = openTag(jobsHtml, "td", jobTitleAt);
+    expect(jobTdTag).toContain("group-hover:bg-wedly-bg-page");
+
+    const companiesHtml = draw({ mode: "companies", view: "list" });
+    const companyValueAt = companiesHtml.indexOf("(주)한빛정밀");
+    const companyTrTag = openTag(companiesHtml, "tr", companyValueAt);
+    expect(companyTrTag).toContain("group");
+    const companyTdTag = openTag(companiesHtml, "td", companyValueAt);
+    expect(companyTdTag).toContain("group-hover:bg-wedly-bg-page");
+  });
+});
+
+describe("회사 이력 표 제목 — 눌러서 펼침(2026-09-06 반려 5)", () => {
+  it("펼친 상태에서는 두 줄 제한(line-clamp-2)이 사라진다", () => {
+    expect(historyTitleClamp(false)).toContain("line-clamp-2");
+    expect(historyTitleClamp(true)).not.toContain("line-clamp-2");
+  });
+
+  it("제목 칸이 글쇠로도 눌리는 자리다 — 「서식 보기」가 잠겨 있어도 펼치는 자리는 따로 산다", () => {
+    const detail: HistoryCompanyDetail = {
+      key: "b:1234567890",
+      companyName: "(주)한빛정밀",
+      representative: "김대표",
+      phone: "010-2•••-4567",
+      email: "ha***@hanbit.kr",
+      bizNo: "1234567890",
+      sourceRowId: "",
+      items: [companyItem({ hasMail: false, recipientId: undefined })],
+    };
+    const html = draw({ view: "company", company: detail });
+    const titleValueAt = html.indexOf("장려금 2차 서류 제출 안내");
+    const titleDivTag = html.slice(html.lastIndexOf("<div", titleValueAt), titleValueAt);
+    expect(titleDivTag).toContain('role="button"');
+    expect(titleDivTag).toContain('tabindex="0"');
   });
 });
 

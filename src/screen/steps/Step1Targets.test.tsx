@@ -139,6 +139,59 @@ describe("휴대폰 폭 표 머리글 — 열 제목이 세로로 안 쪼개진�
   });
 });
 
+describe("고정 셀(체크박스·회사명) — hover 강조·환불 표시가 스크롤해도 보인다(2026-09-06 반려 4)", () => {
+  function openTag(markup: string, tagName: string, beforeIdx: number): string {
+    const start = markup.lastIndexOf(`<${tagName}`, beforeIdx);
+    expect(start, `<${tagName}> 시작 위치(기준 ${beforeIdx})`).toBeGreaterThan(-1);
+    const end = markup.indexOf(">", start);
+    return markup.slice(start, end + 1);
+  }
+
+  it("환불 행은 첫 고정 셀(체크박스 칸)에 빨간 왼쪽 테두리가 선다 — tr 의 inset 대신 스크롤해도 보인다", () => {
+    // 배포본 문제: tr 의 shadow-[inset_3px_0_0_...] 는 체크박스 td 의 불투명 배경에 가려 스크롤 시 안 보였다.
+    const out = draw({ visibleTargets: [target({ refundedAt: "2026-08-01" })] });
+    const checkboxAt = out.indexOf('aria-label="(주)한빛정밀 고르기"');
+    expect(checkboxAt, "체크박스").toBeGreaterThan(0);
+    const checkboxTdTag = openTag(out, "td", checkboxAt);
+    expect(checkboxTdTag).toContain("border-l-[3px]");
+    expect(checkboxTdTag).toContain("border-wedly-red");
+  });
+
+  it("환불 아닌 줄은 빨간 테두리가 없다", () => {
+    const out = draw({ visibleTargets: [target({ refundedAt: "" })] });
+    const checkboxAt = out.indexOf('aria-label="(주)한빛정밀 고르기"');
+    const checkboxTdTag = openTag(out, "td", checkboxAt);
+    expect(checkboxTdTag).not.toContain("border-wedly-red");
+  });
+
+  it("체크박스·회사명 고정 셀은 group-hover 로 행과 같은 hover 색을 받는다 — 불투명 배경이 hover 를 안 가린다", () => {
+    const out = draw();
+    const companyValueAt = out.indexOf(">(주)한빛정밀<");
+    expect(companyValueAt, "회사명 값 칸").toBeGreaterThan(0);
+    const trTag = openTag(out, "tr", companyValueAt);
+    expect(trTag).toContain("group");
+
+    const checkboxAt = out.indexOf('aria-label="(주)한빛정밀 고르기"');
+    const checkboxTdTag = openTag(out, "td", checkboxAt);
+    expect(checkboxTdTag).toContain("group-hover:bg-wedly-bg-page");
+
+    const companyTdTag = openTag(out, "td", companyValueAt);
+    expect(companyTdTag).toContain("group-hover:bg-wedly-bg-page");
+    const companyDivTag = out.slice(out.lastIndexOf("<div", companyValueAt), companyValueAt);
+    expect(companyDivTag).toContain("max-w-[160px]");
+    expect(companyDivTag).toContain("truncate");
+    expect(companyDivTag).toContain('title="(주)한빛정밀"');
+  });
+
+  it("제외(발송 불가) 줄은 hover 대신 회색 층 배경을 고정 셀에도 그대로 준다", () => {
+    const out = draw({ visibleTargets: [target({ sendable: false, excludeReason: "이메일 없음" })] });
+    const companyValueAt = out.indexOf(">(주)한빛정밀<");
+    const companyTdTag = openTag(out, "td", companyValueAt);
+    expect(companyTdTag).toContain("bg-wedly-bg-gray/50");
+    expect(companyTdTag).not.toContain("group-hover:bg-wedly-bg-page");
+  });
+});
+
 describe("발송 열 딱지 — 낱말 중간에서 끊기지 않는다(2026-09-06 반려 5)", () => {
   /** 딱지 글자 바로 앞의 여는 태그들을 꺼낸다(딱지는 알약 span + 색 점 span 으로 그려진다). */
   function tagsBefore(html: string, label: string): string {

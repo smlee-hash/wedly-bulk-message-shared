@@ -8,6 +8,7 @@
 // ★안 쓰는 통로의 숫자는 「0」이 아니라 「—」다. 알림톡만 보낸 발송에 「도착 0」이 서면
 //  담당자는 「메일이 하나도 안 갔다」로 읽는다.
 
+import { useState } from "react";
 import { Building2, History, Inbox, Search, X } from "lucide-react";
 import { SegmentedControl, StatusBox } from "@wedly/ui-shared/ui";
 import { Badge } from "../ui/Badge";
@@ -73,6 +74,12 @@ function Channel({ badges }: { badges: HistoryBadge[] }) {
 function Num({ value, shown }: { value: number; shown: boolean }) {
   if (!shown) return <span className="text-wedly-t2">—</span>;
   return <>{won(value)}</>;
+}
+
+/** 회사 이력 제목 칸의 두 줄 제한 — 눌러서 펼치면 사라진다(2026-09-06 반려 5).
+ *  상태(펼침 여부)는 이 컴포넌트 안에서만 가지므로, 그 결정 로직만 여기 떼어내 시험한다. */
+export function historyTitleClamp(expanded: boolean): string {
+  return expanded ? "" : "line-clamp-2";
 }
 
 // ★휴대폰 폭(390px) 실측(2026-09-06): 열 제목이 세로로 쪼개지고, 1280px 에서도 「받는 사/람」이 됐다
@@ -230,6 +237,10 @@ export function HistoryTab({
   closeMail,
   retryMail,
 }: HistoryTabProps) {
+  // 회사 이력 표 「제목 / 안내」 — 눌러서 펼친 줄의 열쇠(jobId-인덱스). 서식 잠금과는 별개 상태다.
+  const [expandedTitleKey, setExpandedTitleKey] = useState<string | null>(null);
+  const toggleTitle = (key: string) => setExpandedTitleKey((cur) => (cur === key ? null : key));
+
   // ★응답이 도착한 뒤에는 서버 결과를 그대로 믿는다 — 수신자 이름으로 걸린 발송은 목록 줄에
   //  회사 이름이 없어, 화면이 한 번 더 거르면 **맞는 결과가 조용히 사라진다.**
   const shownJobs = loadedQ === q ? jobs : filterJobs(jobs, q);
@@ -354,14 +365,19 @@ export function HistoryTab({
                         e.preventDefault();
                         openJob(j);
                       }}
-                      className="cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
+                      className="group cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
                     >
                       <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{formatHistoryTime(j.createdAt)}</td>
                       <td className={cn(TD, "whitespace-nowrap")}>{j.senderName || "—"}</td>
                       <td className="whitespace-nowrap px-3 py-2"><Channel badges={badges} /></td>
                       {/* ★제목/안내 열도 왼쪽에 고정 — 나머지(채널·시각 등)를 가로로 넘겨도 「무슨 발송인지」가
-                          안 사라지게. 길 수 있어 min-w/max-w 로 폭을 가두고 두 줄까지만 보인다(line-clamp-2). */}
-                      <td className={cn(TD, "sticky left-0 z-[1] min-w-[200px] max-w-[320px] break-keep line-clamp-2 bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>{j.title || "—"}</td>
+                          안 사라지게. 길 수 있어 min-w/max-w 로 폭을 가두고 두 줄까지만 보인다(line-clamp-2).
+                          ★line-clamp 은 td 자체가 아니라 안쪽 div 에 준다 — td 에 직접 주면 display:-webkit-box
+                          가 되어 표 칸 배치가 깨진다(2026-09-06 반려 1). group-hover 는 행 hover 색과 같은
+                          토큰(hover:bg-wedly-bg-page) — 불투명 배경이 hover 강조를 가리지 않게 한다(반려 4). */}
+                      <td className={cn(TD, "sticky left-0 z-[1] min-w-[200px] max-w-[320px] bg-white group-hover:bg-wedly-bg-page shadow-[1px_0_0_var(--wedly-bd)]")}>
+                        <div className="max-w-[220px] line-clamp-2 break-keep" title={j.title || undefined}>{j.title || "—"}</div>
+                      </td>
                       <td className={TD_NUM}>{won(j.total)}</td>
                       <td className={TD_NUM}><Num value={j.delivered} shown={hasEmail} /></td>
                       <td className={TD_NUM}><Num value={j.viewed} shown={hasEmail} /></td>
@@ -413,10 +429,14 @@ export function HistoryTab({
                       e.preventDefault();
                       openCompany(c.key);
                     }}
-                    className="cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
+                    className="group cursor-pointer border-t border-wedly-bd transition-colors duration-150 ease-out hover:bg-wedly-bg-page focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-wedly-accent"
                   >
-                    {/* ★회사명도 왼쪽에 고정 — 나머지를 가로로 넘겨도 「어느 회사인지」가 안 사라지게. */}
-                    <td className={cn(TD, "sticky left-0 z-[1] min-w-[120px] whitespace-nowrap font-semibold bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>{c.companyName || "—"}</td>
+                    {/* ★회사명도 왼쪽에 고정 — 나머지를 가로로 넘겨도 「어느 회사인지」가 안 사라지게.
+                        긴 상호는 안쪽 div 의 max-w+truncate 로 잘라 화면을 안 덮게 한다(반려 3),
+                        title 로 전체 이름을 준다. group-hover 는 행 hover 색과 같은 토큰(반려 4). */}
+                    <td className={cn(TD, "sticky left-0 z-[1] min-w-[120px] bg-white group-hover:bg-wedly-bg-page shadow-[1px_0_0_var(--wedly-bd)]")}>
+                      <div className="max-w-[160px] truncate font-semibold" title={c.companyName || undefined}>{c.companyName || "—"}</div>
+                    </td>
                     <td className={cn(TD, "whitespace-nowrap")}>{c.representative || "—"}</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{c.phone || "—"}</td>
                     {/* 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로. */}
@@ -447,7 +467,8 @@ export function HistoryTab({
           <TableBox min="min-w-[880px]">
             <thead className="text-wedly-tablehead">
               <tr className="bg-wedly-accent text-left font-semibold text-white">
-                <th scope="col" className={cn(TH, "min-w-[120px]")}>회사명</th>
+                {/* ★회사명도 발송별과 같은 방식으로 왼쪽에 고정한다(2026-09-06 반려 2). */}
+                <th scope="col" className={TH_STICKY_COMPANY}>회사명</th>
                 <th scope="col" className={cn(TH, "min-w-[72px]")}>대표명</th>
                 <th scope="col" className={cn(TH, "min-w-[120px]")}>연락처</th>
                 <th scope="col" className={cn(TH, "min-w-[220px]")}>이메일</th>
@@ -470,7 +491,10 @@ export function HistoryTab({
               ) : (
                 jobRecipients.map((r, i) => (
                   <tr key={r.id || `${r.phone}-${i}`} className="border-t border-wedly-bd">
-                    <td className={cn(TD, "min-w-[120px] whitespace-nowrap")}>{r.companyName || "—"}</td>
+                    {/* 회사명은 왼쪽에 고정하고, 긴 상호는 안쪽 div 에서 줄임표로 자른다(반려 2·3). */}
+                    <td className={cn(TD, "sticky left-0 z-[1] min-w-[120px] bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>
+                      <div className="max-w-[160px] truncate" title={r.companyName || undefined}>{r.companyName || "—"}</div>
+                    </td>
                     <td className={cn(TD, "whitespace-nowrap")}>{r.representative || "—"}</td>
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{r.phone || "—"}</td>
                     <td className={cn(TD, "min-w-[220px] break-all")}>{r.email || "—"}</td>
@@ -531,7 +555,8 @@ export function HistoryTab({
               <tr className="bg-wedly-accent text-left font-semibold text-white">
                 <th scope="col" className={TH}>받은 시각</th>
                 <th scope="col" className={TH}>채널</th>
-                <th scope="col" className={cn(TH, "min-w-[200px] max-w-[320px]")}>제목 / 안내</th>
+                {/* ★제목/안내도 발송별과 같은 방식으로 왼쪽에 고정한다(2026-09-06 반려 2). */}
+                <th scope="col" className={TH_STICKY_TITLE}>제목 / 안내</th>
                 <th scope="col" className={TH}>보낸 사람</th>
                 <th scope="col" className={TH}>신호</th>
                 <th scope="col" className={TH}>주소 출처</th>
@@ -548,11 +573,35 @@ export function HistoryTab({
                   hint="이 회사에 보낸 안내 기록이 아직 없습니다."
                 />
               ) : (
-                company.items.map((it, i) => (
-                  <tr key={`${it.jobId}-${i}`} className="border-t border-wedly-bd">
+                company.items.map((it, i) => {
+                  const titleKey = `${it.jobId}-${i}`;
+                  const titleExpanded = expandedTitleKey === titleKey;
+                  return (
+                  <tr key={titleKey} className="border-t border-wedly-bd">
                     <td className={cn(TD, "whitespace-nowrap tabular-nums")}>{formatHistoryTime(it.createdAt)}</td>
                     <td className="whitespace-nowrap px-3 py-2"><Channel badges={channelBadges(it.channel)} /></td>
-                    <td className={cn(TD, "min-w-[200px] max-w-[320px] break-keep line-clamp-2")}>{it.title || "—"}</td>
+                    {/* ★제목도 왼쪽에 고정하고(반려 2), line-clamp 는 td 가 아니라 안쪽 div 에 준다(반려 1).
+                        「서식 보기」가 잠긴 줄에서도 이 칸을 누르면 두 줄 제한이 풀린다(반려 5) — 서식
+                        보기와는 별개의, 이 컴포넌트 안에서만 도는 상태다. */}
+                    <td className={cn(TD, "sticky left-0 z-[1] min-w-[200px] max-w-[320px] bg-white shadow-[1px_0_0_var(--wedly-bd)]")}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => toggleTitle(titleKey)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter" && e.key !== " ") return;
+                          e.preventDefault();
+                          toggleTitle(titleKey);
+                        }}
+                        className={cn(
+                          "max-w-[220px] cursor-pointer break-keep focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-wedly-accent",
+                          historyTitleClamp(titleExpanded),
+                        )}
+                        title={it.title || undefined}
+                      >
+                        {it.title || "—"}
+                      </div>
+                    </td>
                     <td className={cn(TD, "whitespace-nowrap")}>{it.senderName || "—"}</td>
                     <td className="whitespace-nowrap px-3 py-2"><Signal badge={rowSignalBadge(it)} /></td>
                     <td className={cn(TD, "whitespace-nowrap text-wedly-t2")}>
@@ -571,7 +620,8 @@ export function HistoryTab({
                       </Button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </TableBox>

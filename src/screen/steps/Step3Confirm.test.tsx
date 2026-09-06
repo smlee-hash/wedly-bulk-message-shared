@@ -334,6 +334,53 @@ describe("휴대폰 폭 표 머리글 — 발송 현황 수신자 표(2026-09-06
   });
 });
 
+describe("발송 현황 표 — 회사명 왼쪽 고정 · 실패 이유 줄바꿈(2026-09-06 반려 2·3·6)", () => {
+  function openTag(markup: string, tagName: string, beforeIdx: number): string {
+    const start = markup.lastIndexOf(`<${tagName}`, beforeIdx);
+    expect(start, `<${tagName}> 시작 위치(기준 ${beforeIdx})`).toBeGreaterThan(-1);
+    const end = markup.indexOf(">", start);
+    return markup.slice(start, end + 1);
+  }
+
+  it("회사명 th·td 가 왼쪽에 고정되고, 긴 상호는 안쪽 div 에서 줄임표로 잘린다(반려 2·3)", () => {
+    const markup = html({
+      jobId: "job_1",
+      progress: progress({ recipients: [row({ companyName: "(주)한빛정밀" })] }),
+    });
+    const thAt = markup.indexOf(">회사명<");
+    expect(thAt, "회사명 th").toBeGreaterThan(0);
+    const thTag = openTag(markup, "th", thAt);
+    expect(thTag).toContain("sticky");
+    expect(thTag).toContain("left-0");
+
+    const valueAt = markup.indexOf("(주)한빛정밀");
+    expect(valueAt, "회사명 값 칸").toBeGreaterThan(0);
+    const tdTag = openTag(markup, "td", valueAt);
+    expect(tdTag).toContain("sticky");
+    const divTag = openTag(markup, "div", valueAt);
+    expect(divTag).toContain("max-w-[160px]");
+    expect(divTag).toContain("truncate");
+    expect(divTag).toContain('title="(주)한빛정밀"');
+  });
+
+  it("실패한 이유 칸은 줄바꿈을 허용한다 — 긴 사유를 한 줄에 가두지 않는다(반려 6)", () => {
+    const markup = html({
+      jobId: "job_1",
+      progress: progress({
+        recipients: [row({ email: "", emailStatus: "skipped", emailSkipReason: "수신거부 확인 불가" })],
+      }),
+    });
+    // 같은 사유가 배지(이메일 신호)에도 실패 이유 칸에도 뜬다 — 뒤쪽(칸) 것을 본다.
+    const reasonAt = markup.lastIndexOf("수신거부 확인 불가");
+    expect(reasonAt, "실패 이유 값").toBeGreaterThan(0);
+    const tdTag = openTag(markup, "td", reasonAt);
+    expect(tdTag).not.toContain("whitespace-nowrap");
+    expect(tdTag).toContain("min-w-[200px]");
+    expect(tdTag).toContain("max-w-[320px]");
+    expect(tdTag).toContain("break-keep");
+  });
+});
+
 describe("확인 모달 — 브라우저 confirm 을 쓰지 않는다", () => {
   it("보내기 확인은 이메일 인원과 0원을 적는다", () => {
     const markup = html({ confirmOpen: true });

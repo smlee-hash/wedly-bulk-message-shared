@@ -710,7 +710,8 @@ export function Step3Confirm({
                   <table className="w-full min-w-[640px] border-collapse">
                     <thead className="text-wedly-tablehead">
                       <tr className="bg-wedly-accent text-left font-semibold text-white">
-                        <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-2.5">회사명</th>
+                        {/* ★회사명은 발송 기록과 같은 방식으로 왼쪽에 고정한다(2026-09-06 반려 2). */}
+                        <th scope="col" className="sticky left-0 z-10 min-w-[120px] whitespace-nowrap bg-wedly-accent px-3 py-2.5 shadow-[1px_0_0_var(--wedly-bd)]">회사명</th>
                         <th scope="col" className="min-w-[72px] whitespace-nowrap px-3 py-2.5">대표명</th>
                         {jobChat && <th scope="col" className="min-w-[120px] whitespace-nowrap px-3 py-2.5">연락처</th>}
                         {jobChat && <th scope="col" className="whitespace-nowrap px-3 py-2.5">알림 상태</th>}
@@ -725,7 +726,10 @@ export function Step3Confirm({
                         const signal = emailSignalOf(r);
                         return (
                           <tr key={`${r.phone}-${i}`} className="border-t border-wedly-bd">
-                            <td className="min-w-[120px] whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t1">{r.companyName || "—"}</td>
+                            {/* 회사명은 왼쪽에 고정하고, 긴 상호는 안쪽 div 에서 줄임표로 자른다(반려 2·3). */}
+                            <td className="sticky left-0 z-[1] min-w-[120px] bg-white px-3 py-2 text-wedly-sub text-wedly-t1 shadow-[1px_0_0_var(--wedly-bd)]">
+                              <div className="max-w-[160px] truncate" title={r.companyName || undefined}>{r.companyName || "—"}</div>
+                            </td>
                             <td className="min-w-[72px] whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t1">{r.representative || "—"}</td>
                             {jobChat && (
                               <td className="whitespace-nowrap px-3 py-2 text-wedly-sub tabular-nums text-wedly-t1">{r.phone || "—"}</td>
@@ -753,7 +757,8 @@ export function Step3Confirm({
                                 {signal ? <Badge variant={signal.variant}>{signal.label}</Badge> : <span className="text-wedly-sub text-wedly-t2">—</span>}
                               </td>
                             )}
-                            <td className="whitespace-nowrap px-3 py-2 text-wedly-sub text-wedly-t2">
+                            {/* ★긴 사유를 한 줄에 가두지 않는다 — 줄바꿈을 허용해 잘리지 않게 한다(반려 6). */}
+                            <td className="min-w-[200px] max-w-[320px] break-keep px-3 py-2 text-wedly-sub text-wedly-t2">
                               {failureReasonOf(r)}
                             </td>
                           </tr>
