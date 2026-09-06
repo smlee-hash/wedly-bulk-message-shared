@@ -17,6 +17,7 @@ import { Card } from "../ui/Card";
 import { cn } from "../ui/cn";
 import { won } from "./bulk-ui";
 import { HistoryMailModal } from "./HistoryMailModal";
+import { HistoryTimelineModal } from "./HistoryTimelineModal";
 import {
   HISTORY_MODE_OPTIONS,
   HISTORY_SEARCH_PLACEHOLDER,
@@ -34,6 +35,7 @@ import {
   lastSignalAt,
   rowSignalBadge,
   signalBadge,
+  timelineButton,
   type HistoryBadge,
   type HistoryCompanyDetail,
   type HistoryCompanyItem,
@@ -42,6 +44,7 @@ import {
   type HistoryJobRow,
   type HistoryMailState,
   type HistoryMode,
+  type HistoryTimelineState,
 } from "./history-helpers";
 
 /* ────────────────────────────── 작은 조각 ────────────────────────────── */
@@ -210,6 +213,11 @@ export interface HistoryTabProps {
   openCompanyMail: (item: HistoryCompanyItem) => void;
   closeMail: () => void;
   retryMail: () => void;
+  /** 「기록」 모달 — `null` 이면 닫힘(서식 모달과 같은 방식). */
+  timeline: HistoryTimelineState | null;
+  openTimeline: (r: HistoryJobRecipient) => void;
+  closeTimeline: () => void;
+  retryTimeline: () => void;
 }
 
 export function HistoryTab({
@@ -236,6 +244,10 @@ export function HistoryTab({
   openCompanyMail,
   closeMail,
   retryMail,
+  timeline,
+  openTimeline,
+  closeTimeline,
+  retryTimeline,
 }: HistoryTabProps) {
   // 회사 이력 표 「제목 / 안내」 — 눌러서 펼친 줄의 열쇠(jobId-인덱스). 서식 잠금과는 별개 상태다.
   const [expandedTitleKey, setExpandedTitleKey] = useState<string | null>(null);
@@ -475,7 +487,7 @@ export function HistoryTab({
                 <th scope="col" className={TH}>신호</th>
                 <th scope="col" className={TH}>마지막 신호</th>
                 <th scope="col" className={TH}>
-                  <span className="sr-only">이 회사의 다른 발송 · 서식 보기</span>
+                  <span className="sr-only">서식 보기 · 기록 · 이 회사의 다른 발송</span>
                 </th>
               </tr>
             </thead>
@@ -514,6 +526,24 @@ export function HistoryTab({
                         >
                           서식 보기
                         </Button>
+                        {/* ★신호 기록 — 건수를 모르면(옛 서버) 숫자 없이, 0건이면 「없음」으로 잠근다.
+                            빈 모달을 띄우느니 안 여는 게 낫다(timelineButton 이 그 판정의 정본). */}
+                        {(() => {
+                          const rec = timelineButton(r.eventCount);
+                          return rec.enabled ? (
+                            <Button
+                              type="button"
+                              variant="link"
+                              size="xs"
+                              onClick={() => openTimeline(r)}
+                              disabled={!r.id}
+                            >
+                              {rec.label}
+                            </Button>
+                          ) : (
+                            <span className="text-wedly-hint text-wedly-muted">{rec.label}</span>
+                          );
+                        })()}
                         <Button
                           type="button"
                           variant="link"
@@ -642,6 +672,9 @@ export function HistoryTab({
 
       {/* 서식 보기 — 어느 판에서 눌러도 이 하나가 뜬다. */}
       <HistoryMailModal mail={mail} onClose={closeMail} onRetry={retryMail} />
+
+      {/* 신호 기록(타임라인) — 서식 모달과 나란히, 한 번에 하나만 열린다. */}
+      <HistoryTimelineModal timeline={timeline} onClose={closeTimeline} onRetry={retryTimeline} />
     </Card>
   );
 }

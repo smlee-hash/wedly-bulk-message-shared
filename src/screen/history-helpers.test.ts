@@ -21,6 +21,12 @@ import {
   normalizeHistoryQuery,
   rowSignalBadge,
   signalBadge,
+  TIMELINE_EMPTY_TITLE,
+  formatTimelineTime,
+  timelineAddressLine,
+  timelineButton,
+  timelineModalTitle,
+  timelineTone,
   type HistoryJobRecipient,
   type HistoryJobRow,
 } from "./history-helpers";
@@ -410,5 +416,95 @@ describe("lastSignalAt — 가장 늦게 찍힌 시각", () => {
   it("아무 시각도 없으면 빈 글자", () => {
     expect(lastSignalAt({})).toBe("");
     expect(lastSignalAt({ emailSentAt: null, viewedAt: null })).toBe("");
+  });
+});
+
+/* ────────────────────── 수신자 타임라인(2026-09-07 2단계) ────────────────────── */
+
+describe("timelineButton — 「기록 N건」 · 「기록」 · 「없음」", () => {
+  it("서버가 센 건수를 주면 그 숫자를 적는다", () => {
+    expect(timelineButton(5)).toEqual({ label: "기록 5건", enabled: true });
+    expect(timelineButton(1234).label).toBe("기록 1,234건");
+  });
+
+  it("건수를 안 주면(옛 서버·배포 교체 중) 숫자 없이 「기록」 — 단추는 그대로 눌린다", () => {
+    // 숫자를 모른다고 단추를 잠그면 이미 쌓여 있는 기록을 사람이 못 본다.
+    expect(timelineButton(undefined)).toEqual({ label: "기록", enabled: true });
+    expect(timelineButton(null)).toEqual({ label: "기록", enabled: true });
+    expect(timelineButton(Number.NaN)).toEqual({ label: "기록", enabled: true });
+  });
+
+  it("0건이면 「없음」이고 못 누른다 — 빈 모달을 띄우지 않는다(시안 4번째 줄)", () => {
+    expect(timelineButton(0)).toEqual({ label: "없음", enabled: false });
+    expect(timelineButton(-3)).toEqual({ label: "없음", enabled: false });
+  });
+});
+
+describe("timelineTone — 항목 색은 뜻으로 정한다", () => {
+  it("보냄·도착·알림톡 링크 열림은 파랑(통로가 움직인 일)", () => {
+    expect(timelineTone("sent")).toBe("blue");
+    expect(timelineTone("delivered")).toBe("blue");
+    expect(timelineTone("chat_viewed")).toBe("blue");
+  });
+
+  it("확인함·첨부 열람은 초록(고객이 이메일 안에서 실제로 누른 일)", () => {
+    expect(timelineTone("viewed")).toBe("green");
+    expect(timelineTone("attachment")).toBe("green");
+  });
+
+  it("반송·실패·스팸 신고·수신 거부는 빨강", () => {
+    expect(timelineTone("bounced")).toBe("red");
+    expect(timelineTone("failed")).toBe("red");
+    expect(timelineTone("complained")).toBe("red");
+    expect(timelineTone("unsubscribed")).toBe("red");
+  });
+
+  it("직접 입력은 보라", () => {
+    expect(timelineTone("manual_email_entered")).toBe("purple");
+  });
+
+  it("모르는 갈래는 무채색 — 지어낸 뜻을 색으로 칠하지 않는다", () => {
+    expect(timelineTone("something_new")).toBe("muted");
+    expect(timelineTone("")).toBe("muted");
+  });
+});
+
+describe("formatTimelineTime — 초까지 적는다(같은 초에 두 신호가 겹친다)", () => {
+  it("모양이 아니거나 비면 「—」", () => {
+    expect(formatTimelineTime("")).toBe("—");
+    expect(formatTimelineTime(null)).toBe("—");
+    expect(formatTimelineTime("어제")).toBe("—");
+  });
+
+  it("월-일 시:분:초 모양 — 값이 아니라 모양을 잰다(보는 사람의 시간대)", () => {
+    expect(formatTimelineTime("2026-09-06T06:07:29.000Z")).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+});
+
+describe("timelineModalTitle · timelineAddressLine — 머리 카드", () => {
+  it("회사명을 제목에 넣고, 없으면 지어내지 않는다", () => {
+    expect(timelineModalTitle("대성포장산업")).toBe("이메일 기록 — 대성포장산업");
+    expect(timelineModalTitle("")).toBe("이메일 기록");
+    expect(timelineModalTitle(null)).toBe("이메일 기록");
+  });
+
+  it("가린 주소 옆에 출처를 적는다 — 직접 입력인지가 여기서 갈린다", () => {
+    expect(timelineAddressLine({ emailMasked: "ds***@naver.com", emailSource: "manual" })).toBe(
+      "ds***@naver.com (직접 입력)",
+    );
+    expect(timelineAddressLine({ emailMasked: "bo***@hanmail.net", emailSource: "basic" })).toBe(
+      "bo***@hanmail.net (기본정보 이메일)",
+    );
+  });
+
+  it("출처를 모르면 주소만, 주소도 없으면 「—」", () => {
+    expect(timelineAddressLine({ emailMasked: "bo***@hanmail.net", emailSource: "" })).toBe("bo***@hanmail.net");
+    expect(timelineAddressLine({})).toBe("—");
+  });
+});
+
+describe("빈 기록 문구", () => {
+  it("「아직 기록이 없어요」 — 없음을 성공처럼 적지 않는다", () => {
+    expect(TIMELINE_EMPTY_TITLE).toBe("아직 기록이 없어요");
   });
 });

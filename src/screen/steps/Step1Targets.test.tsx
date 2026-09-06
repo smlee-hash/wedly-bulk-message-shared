@@ -210,3 +210,55 @@ describe("발송 열 딱지 — 낱말 중간에서 끊기지 않는다(2026-09-
     expect(tagsBefore(html, "번호 없음 · 이메일 없음")).toContain("whitespace-nowrap");
   });
 });
+
+/* ────────────── 이메일 열 반송 표식(2026-09-07 2단계) ────────────── */
+
+describe("반송된 주소는 표에서 알아본다 — 「이메일 없음」으로만 두지 않는다", () => {
+  const bounced = target({
+    email: "",
+    emailSendable: false,
+    // 사유는 기존 열거에 늘어난 값이다(새 칸이 아니다 — 2026-09-07 서버 확정본).
+    emailExcludeReason: "반송됨",
+    bouncedEmail: "ds***@naver.com",
+    bouncedAt: "2026-09-06T06:00:00.000Z",
+  });
+
+  it("빨간 칩 「반송됨 · 주소 확인」과 되돌아온 주소·날짜가 함께 선다", () => {
+    const markup = draw({ channel: "email", visibleTargets: [bounced], sendableTargets: [] });
+    expect(markup).toContain("반송됨 · 주소 확인");
+    expect(markup).toContain("bg-wedly-red");
+    expect(markup).toMatch(/ds\*\*\*@naver\.com \(\d{1,2}\/\d{1,2}\)/);
+  });
+
+  it("「직접 입력」은 그대로 남는다 — 새 주소를 넣을 길이 있어야 한다", () => {
+    const markup = draw({ channel: "email", visibleTargets: [bounced], sendableTargets: [] });
+    expect(markup).toContain("직접 입력");
+  });
+
+  it("표식이 없는 줄은 예전 그대로 「—」 + 직접 입력이다(회귀 0)", () => {
+    const markup = draw({ channel: "email" });
+    expect(markup).not.toContain("반송됨");
+    expect(markup).toContain("직접 입력");
+  });
+
+  it("반송 표식이 있어도 쓸 수 있는 새 주소가 있으면 주소를 그대로 그린다", () => {
+    const markup = draw({
+      channel: "email",
+      visibleTargets: [
+        target({ ...bounced, email: "new@hanbit.kr", emailSendable: true, emailExcludeReason: "" }),
+      ],
+    });
+    expect(markup).toContain("new@hanbit.kr");
+    expect(markup).not.toContain("반송됨 · 주소 확인");
+  });
+
+  it("주소를 못 받았으면 칩만 세우고 지어내지 않는다", () => {
+    const markup = draw({
+      channel: "email",
+      visibleTargets: [target({ ...bounced, bouncedEmail: "", bouncedAt: "" })],
+      sendableTargets: [],
+    });
+    expect(markup).toContain("반송됨 · 주소 확인");
+    expect(markup).not.toContain("(undefined)");
+  });
+});

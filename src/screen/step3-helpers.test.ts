@@ -6,6 +6,8 @@ import {
   DEFAULT_PRICING,
   EMAIL_REASON_MISSING,
   NOTICE_CATEGORIES,
+  SIGNAL_POLL_INTERVAL_MS,
+  SIGNAL_POLL_WINDOW_MS,
   alimtalkBadgeOf,
   alimtalkFailedCountOf,
   canConfirmSend,
@@ -24,6 +26,8 @@ import {
   restoredJobFromStore,
   sendHeadline,
   sendRunning,
+  shouldKeepPollingSignals,
+  signalWaitNotice,
   skippedNotice,
   subjectRuleOk,
   type EmailChecklistState,
@@ -766,5 +770,64 @@ describe("canRestartSend — 발송이 끝난 뒤에만 「새 발송 시작」�
     expect(hookSrc).toContain("setOriginalText(\"\");");
     expect(hookSrc).toContain("setChannel(DEFAULT_CHANNEL);");
     expect(hookSrc).toContain("canRestartSend(progress)");
+  });
+});
+
+/* ────────────── 끝난 뒤 신호 이어받기(2026-09-07 2단계) ────────────── */
+
+describe("shouldKeepPollingSignals — 발송이 끝난 뒤에도 늦게 오는 도착 신호를 받는다", () => {
+  /** 「보냄」까지만 찍힌 줄 — 도착·반송·실패가 아직 없다. */
+  const waiting = { emailSentAt: "2026-09-07T01:00:00.000Z" };
+
+  it("보냄인데 도착·반송·실패가 없는 사람이 있고 120초 안이면 계속 본다", () => {
+    expect(shouldKeepPollingSignals({ recipients: [waiting] }, 0)).toBe(true);
+    expect(shouldKeepPollingSignals({ recipients: [waiting] }, 119_000)).toBe(true);
+  });
+
+  it("120초가 지나면 멈춘다 — 영영 도는 조회를 남기지 않는다", () => {
+    expect(shouldKeepPollingSignals({ recipients: [waiting] }, SIGNAL_POLL_WINDOW_MS)).toBe(false);
+    expect(shouldKeepPollingSignals({ recipients: [waiting] }, 130_000)).toBe(false);
+  });
+
+  it("모두 도착·확인·반송·실패로 결론이 났으면 그 자리에서 멈춘다", () => {
+    const settled = [
+      { emailSentAt: "2026-09-07T01:00:00.000Z", emailDeliveredAt: "2026-09-07T01:00:03.000Z" },
+      { emailSentAt: "2026-09-07T01:00:01.000Z", emailBouncedAt: "2026-09-07T01:00:05.000Z" },
+      { emailSentAt: "2026-09-07T01:00:02.000Z", emailStatus: "failed" },
+      { emailSentAt: "2026-09-07T01:00:02.000Z", emailViewedAt: "2026-09-07T01:04:00.000Z" },
+      { emailSentAt: "2026-09-07T01:00:02.000Z", emailStatus: "complained" },
+    ];
+    expect(shouldKeepPollingSignals({ recipients: settled }, 1_000)).toBe(false);
+    // 한 사람이라도 기다리는 중이면 다시 참
+    expect(shouldKeepPollingSignals({ recipients: [...settled, waiting] }, 1_000)).toBe(true);
+  });
+
+  it("아직 안 나간 줄·알림톡만 보낸 작업·빈 응답은 기다리지 않는다", () => {
+    // 「보냄」이 안 찍힌 줄은 서버가 아직 안 보낸 것이라 신호를 기다릴 대상이 아니다.
+    expect(shouldKeepPollingSignals({ recipients: [{ emailStatus: "pending" }] }, 1_000)).toBe(false);
+    // 이메일 칸이 아예 없는 줄(알림톡 전용 작업) — 기다릴 신호 자체가 없다.
+    expect(shouldKeepPollingSignals({ recipients: [{}] }, 1_000)).toBe(false);
+    expect(shouldKeepPollingSignals({ recipients: [] }, 1_000)).toBe(false);
+    expect(shouldKeepPollingSignals(null, 1_000)).toBe(false);
+    expect(shouldKeepPollingSignals(undefined, 0)).toBe(false);
+  });
+});
+
+describe("signalWaitNotice — 남은 초를 그대로 적는다", () => {
+  it("「도착·확인 신호를 N초 더 기다리는 중」", () => {
+    expect(signalWaitNotice(0)).toBe("도착·확인 신호를 120초 더 기다리는 중");
+    expect(signalWaitNotice(5_000)).toBe("도착·확인 신호를 115초 더 기다리는 중");
+    expect(signalWaitNotice(119_400)).toBe("도착·확인 신호를 1초 더 기다리는 중");
+  });
+
+  it("기다리지 않을 때는 빈 글자 — 문구가 사라진다", () => {
+    expect(signalWaitNotice(-1)).toBe("");
+    expect(signalWaitNotice(SIGNAL_POLL_WINDOW_MS)).toBe("");
+    expect(signalWaitNotice(200_000)).toBe("");
+  });
+
+  it("이어받는 간격·창은 5초·120초다", () => {
+    expect(SIGNAL_POLL_INTERVAL_MS).toBe(5_000);
+    expect(SIGNAL_POLL_WINDOW_MS).toBe(120_000);
   });
 });

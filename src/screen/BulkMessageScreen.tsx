@@ -375,6 +375,8 @@ export default function BulkMessageScreen() {
           restartSend={s.restartSend}
           sendStartedAt={s.sendStartedAt}
           sendFinishedAt={s.sendFinishedAt}
+          openTimeline={s.openSendTimeline}
+          signalWaitMs={s.signalWaitMs}
         />
       )}
       </div>
@@ -404,6 +406,10 @@ export default function BulkMessageScreen() {
             openCompanyMail={s.openHistoryCompanyMail}
             closeMail={s.closeHistoryMail}
             retryMail={s.retryHistoryMail}
+            timeline={s.historyTimeline}
+            openTimeline={s.openHistoryTimeline}
+            closeTimeline={s.closeHistoryTimeline}
+            retryTimeline={s.retryHistoryTimeline}
             closeDetail={s.closeHistoryDetail}
             retry={s.retryHistory}
           />

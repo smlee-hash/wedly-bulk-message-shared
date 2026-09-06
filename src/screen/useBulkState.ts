@@ -82,6 +82,8 @@ import {
   type HistoryJobRow,
   type HistoryMailState,
   type HistoryMode,
+  type HistoryTimelineItem,
+  type HistoryTimelineState,
 } from "./history-helpers";
 import {
   DEFAULT_NOTICE_CATEGORY_LABEL,
@@ -100,7 +102,9 @@ import {
   refundedNotice,
   restoredJobFromStore,
   sendRunning,
+  shouldKeepPollingSignals,
   skippedNotice,
+  SIGNAL_POLL_INTERVAL_MS,
   type BulkPricing,
   type EmailChecklistItem,
   type SkippedNotice,
@@ -133,6 +137,14 @@ export interface Target extends ChannelTarget {
   bizNo: string;
   emailSendable: boolean;
   emailExcludeReason: string;
+  /**
+   * 반송 표식(2026-09-07 2단계) — 손으로 넣었던 주소가 되돌아왔을 때만 서버가 실어 준다.
+   * ★사유는 위 `emailExcludeReason` 에 「반송됨」으로 온다(새 칸이 아니다). 아래 둘만 **선택 칸**이라
+   *  안 실어 주는 응답에서는 칩만 서고 주소·날짜가 안 붙는다(화면이 깨지지 않는다).
+   * ★`bouncedEmail` 은 가려서 온다(`ds***@naver.com`) — 원문 주소는 이 통로로 오지 않는다.
+   */
+  bouncedEmail?: string;
+  bouncedAt?: string;
 }
 
 export interface FailedRow {
@@ -144,6 +156,14 @@ export interface FailedRow {
 
 /** 발송 결과 한 줄. 연락처·이메일 주소는 서버가 가려서 준다. */
 export interface RecipientRow extends FailedRow {
+  /**
+   * 수신자 열쇠 — 「기록」 모달이 타임라인을 조회할 때 쓴다(2026-09-07 2단계).
+   * ★선택 칸이다 — 진행 조회가 아직 이 칸을 안 실어 주면 화면은 「기록」 열을 **아예 안 그린다**
+   *  (빈 열을 세우지 않는다). 서버가 실어 주기 시작하면 그날부터 열이 붙는다.
+   */
+  id?: string;
+  /** 이 사람에게 쌓인 신호 기록 수. 없으면 숫자 없이 「기록」으로 그린다. */
+  eventCount?: number;
   status: string;
   /** "sent" | "failed" | "" — 빈 값은 「모름」이다(성공으로 위장하지 않는다). */
   alimtalkStatus: string;
@@ -208,6 +228,19 @@ export type MailRecipientIdentity = Pick<
   HistoryJobRecipient,
   "id" | "companyName" | "representative" | "phone" | "email"
 >;
+
+/**
+ * 「기록」(타임라인) 조회가 쓰는 신원 조각.
+ * ★발송 기록의 수신자 줄(`HistoryJobRecipient`)도, 3단계 진행 표의 줄(`RecipientRow`)도
+ *  이 네 칸만 채우면 같은 조회 함수·같은 모달을 쓴다.
+ * ★불러오는 동안 머리 카드를 세우는 값일 뿐이다 — 응답이 오면 서버 값으로 갈아 끼운다.
+ */
+export interface TimelineRecipientIdentity {
+  id: string;
+  companyName: string;
+  email?: string;
+  emailSource?: string;
+}
 
 /**
  * 줄을 가리키는 열쇠.
@@ -1114,6 +1147,11 @@ export function useBulkState() {
   /** 진행 조회가 연달아 실패했을 때의 안내 — 「보내는 중」이 굳어 보이지 않게. */
   const [pollError, setPollError] = useState("");
   /**
+   * 발송이 끝난 뒤 늦게 오는 도착·확인 신호를 이어받는 중이면 그 경과(ms), 아니면 -1.
+   * ★5초마다 도는 조회가 이 값을 갱신한다 — 따로 초를 세는 시계를 두지 않는다(창이 하나면 충분).
+   */
+  const [signalWaitMs, setSignalWaitMs] = useState(-1);
+  /**
    * 발송은 됐지만 알려 둘 일(직접 입력 주소를 고객 자료에 못 적었다 등).
    * ★서버가 `warnings` 로 준다. 조용히 버리면 담당자는 저장된 줄 안다.
    */
@@ -1251,8 +1289,9 @@ export function useBulkState() {
 
   useEffect(() => {
     if (!jobId) return;
+    setSignalWaitMs(-1);
     let alive = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     // ★실패를 삼키기만 하면 연결이 끊겨도 「보내는 중」이 영영 남는다 — 3회 연속 실패부터 안내를 띄운다.
     let misses = 0;
     const POLL_MISS_LIMIT = 3;
@@ -1262,9 +1301,24 @@ export function useBulkState() {
     };
     // ★앞 조회가 안 끝났으면 다음 회차를 건너뛴다 — 서버가 느릴 때 2초마다 요청이 쌓여 장애를 키운다.
     let inFlight = false;
+    /**
+     * 발송이 끝난 것을 **처음 본** 시각 — 신호 이어받기 창(120초)을 여기서부터 센다.
+     * ★서버는 끝난 시각을 안 준다(진행 조회에 시각 칸이 없다) — 그래서 화면이 본 순간으로 센다.
+     */
+    let doneSeenAt = 0;
+    const stop = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+    /** ★간격을 회차마다 정한다 — 도는 동안 2초, 끝난 뒤 신호를 이어받는 동안 5초. */
+    const schedule = (ms: number) => {
+      stop();
+      if (!alive) return;
+      timer = setTimeout(() => { void tick(); }, ms);
+    };
     const tick = async () => {
       if (inFlight) return;
       inFlight = true;
+      let next = 2000;
       try {
         const res = await fetch(`/api/bulk-message/jobs/${jobId}`);
         const j = await res.json();
@@ -1278,17 +1332,33 @@ export function useBulkState() {
             chatTotal: prev?.chatTotal ?? null,
             emailTotal: prev?.emailTotal ?? null,
           }));
-          // ★이메일만 보내는 작업은 status 가 처음부터 "done" 이다 — 두 칸을 함께 봐야 멈춘다.
-          if (!sendRunning(j.data) && timer) clearInterval(timer);
+          // ★이메일만 보내는 작업은 status 가 처음부터 "done" 이다 — 두 칸을 함께 봐야 한다.
+          if (sendRunning(j.data)) {
+            doneSeenAt = 0;
+            setSignalWaitMs(-1);
+          } else {
+            // ★발송이 끝나도 **도착·반송은 몇 초 뒤에** 웹훅으로 들어온다. 예전에는 여기서 폴링을
+            //  통째로 멈춰, 그 신호가 새로고침 전까지 화면에 안 나타났다.
+            if (!doneSeenAt) doneSeenAt = Date.now();
+            const waited = Date.now() - doneSeenAt;
+            if (!shouldKeepPollingSignals(j.data, waited)) {
+              // 다 왔거나 창(120초)이 지났다 — 다음 회차를 예약하지 않는다(= 폴링 끝, 문구도 사라진다).
+              setSignalWaitMs(-1);
+              return;
+            }
+            setSignalWaitMs(waited);
+            next = SIGNAL_POLL_INTERVAL_MS;
+          }
         } else if (res.status === 404) {
           // 남의 작업·없는 작업이면 적어 둔 번호를 지우고 **1단계로 돌려보낸다** —
           // jobId 를 남기면 1·2단계가 잠긴 채(canGo) 화면이 갇힌다.
           try { sessionStorage.removeItem(JOB_ID_STORE_KEY); } catch { /* 무시 */ }
-          if (timer) clearInterval(timer);
+          stop();
           setJobId("");
           setProgress(null);
           setRestoredFromStore(false);
           setPollError("");
+          setSignalWaitMs(-1);
           setStep(1);
           alertError(JOB_GONE_NOTICE);
           return;
@@ -1300,12 +1370,12 @@ export function useBulkState() {
       } finally {
         inFlight = false;
       }
+      schedule(next);
     };
-    timer = setInterval(tick, 2000);
     void tick();
     return () => {
       alive = false;
-      if (timer) clearInterval(timer);
+      stop();
     };
   }, [jobId, pollKey, alertError]);
 
@@ -1371,6 +1441,7 @@ export function useBulkState() {
     setSendWarnings([]);
     setSendStartedAt(null);
     setSendFinishedAt(null);
+    setSignalWaitMs(-1);
     setRestoredFromStore(false);
     setConfirmOpen(false);
     setStopOpen(false);
@@ -1533,6 +1604,101 @@ export function useBulkState() {
     }
   }, []);
 
+  // ── 「기록」(수신자 타임라인) 모달 ─────────────────────────────
+  //
+  // ★서식 모달과 **다른 번호표**를 쓴다 — 두 모달을 번갈아 눌러도 늦게 온 응답이 다른 모달에
+  //  떨어지지 않게. 한 번에 하나만 열린다(여는 쪽이 다른 하나를 닫는다).
+  const [historyTimeline, setHistoryTimeline] = useState<HistoryTimelineState | null>(null);
+  const timelineSeq = useRef(0);
+  /** 「다시 시도」가 무엇을 다시 부를지 — 누른 줄과 그 발송 번호를 그대로 들고 있는다. */
+  const timelineTarget = useRef<{ jobId: string; r: TimelineRecipientIdentity } | null>(null);
+
+  const closeHistoryTimeline = useCallback(() => {
+    timelineSeq.current += 1; // 돌아가는 중이던 조회 응답은 버린다
+    timelineTarget.current = null;
+    setHistoryTimeline(null);
+  }, []);
+
+  /**
+   * 한 사람의 신호 기록을 시간순으로 읽어 온다.
+   *
+   * ★서버가 주는 것만 그린다 — 항목 글자(title·detail)는 서버가 정본이고 화면은 색·자리만 정한다.
+   * ★주소는 가려서 온다(`emailMasked`). 원문 주소·열쇠는 이 통로로 오지 않는다.
+   */
+  const loadHistoryTimeline = useCallback(async (jobId: string, r: TimelineRecipientIdentity) => {
+    const seq = ++timelineSeq.current;
+    timelineTarget.current = { jobId, r };
+    // 누른 줄의 신원을 먼저 세운다 — 불러오는 동안에도 「누구의 기록인지」가 모달에 보여야 한다.
+    setHistoryTimeline({
+      recipientId: r.id,
+      companyName: r.companyName,
+      emailMasked: String(r.email ?? ""),
+      emailSource: String(r.emailSource ?? ""),
+      subject: "",
+      senderName: "",
+      jobCreatedAt: "",
+      items: [],
+      loading: true,
+      error: "",
+    });
+    try {
+      const res = await fetch(
+        `/api/bulk-message/history/jobs/${encodeURIComponent(jobId)}/timeline?recipient=${encodeURIComponent(r.id)}`,
+      );
+      const j = await res.json().catch(() => null);
+      if (seq !== timelineSeq.current) return;
+      if (!res.ok || j?.success !== true) {
+        throw new Error(loadErrorText(j?.error, "잠시 후 다시 시도해 주세요."));
+      }
+      const items = Array.isArray(j.data?.items) ? (j.data.items as HistoryTimelineItem[]) : [];
+      setHistoryTimeline((prev) =>
+        prev
+          ? {
+              ...prev,
+              // 응답에 그 칸이 **있을 때만** 갈아 끼운다 — 없으면 누른 줄이 들고 온 값을 그대로 둔다.
+              companyName: String(j.data?.recipient?.companyName ?? prev.companyName),
+              emailMasked: String(j.data?.recipient?.emailMasked ?? prev.emailMasked),
+              emailSource: String(j.data?.recipient?.emailSource ?? prev.emailSource),
+              subject: String(j.data?.job?.emailSubject ?? ""),
+              senderName: String(j.data?.job?.senderName ?? ""),
+              jobCreatedAt: String(j.data?.job?.createdAt ?? ""),
+              items,
+              loading: false,
+            }
+          : prev,
+      );
+    } catch (e) {
+      if (seq !== timelineSeq.current) return;
+      setHistoryTimeline((prev) =>
+        prev ? { ...prev, loading: false, error: loadErrorText(e, "기록을 불러오지 못했어요.") } : prev,
+      );
+    }
+  }, []);
+
+  const retryHistoryTimeline = useCallback(() => {
+    const t = timelineTarget.current;
+    if (!t) return;
+    void loadHistoryTimeline(t.jobId, t.r);
+  }, [loadHistoryTimeline]);
+
+  /**
+   * 3단계 현황 표에서 여는 「기록」 — 발송 기록 탭과 **같은 조회 함수·같은 모달**을 쓴다.
+   * ★어느 발송의 줄인지는 지금 도는(또는 방금 끝난) 작업 번호가 안다.
+   * ★수신자 열쇠(`id`)를 아직 안 실어 주는 응답에서는 표가 열 자체를 안 그리지만, 여기서도 막는다.
+   */
+  const openSendTimeline = useCallback(
+    (r: RecipientRow) => {
+      if (!jobId || !r.id) return;
+      void loadHistoryTimeline(jobId, {
+        id: r.id,
+        companyName: r.companyName,
+        email: r.email,
+        emailSource: r.emailSource,
+      });
+    },
+    [jobId, loadHistoryTimeline],
+  );
+
   const loadHistory = useCallback(async () => {
     const seq = ++historySeq.current;
     const mode = historyMode;
@@ -1582,6 +1748,7 @@ export function useBulkState() {
   const openHistoryJob = useCallback(async (job: HistoryJobRow) => {
     const seq = ++historySeq.current;
     closeHistoryMail(); // 다른 발송을 열면 앞 발송의 서식 모달은 닫는다
+    closeHistoryTimeline(); // 기록 모달도 같이 닫는다 — 앞 발송의 줄을 보고 있던 것이다
     setHistoryView("job");
     setHistoryJob(job);
     setHistoryCompany(null);
@@ -1603,16 +1770,28 @@ export function useBulkState() {
     } finally {
       if (seq === historySeq.current) setHistoryLoading(false);
     }
-  }, [closeHistoryMail]);
+  }, [closeHistoryMail, closeHistoryTimeline]);
 
   /** 누른 줄의 서식을 띄운다 — 어느 발송의 줄인지는 지금 열려 있는 발송 상세가 안다. */
   const openHistoryMail = useCallback(
     (r: HistoryJobRecipient) => {
       const jobId = historyJob?.id ?? "";
       if (!jobId || !r.id) return;
+      closeHistoryTimeline();
       void loadHistoryMail(jobId, r);
     },
-    [historyJob, loadHistoryMail],
+    [historyJob, loadHistoryMail, closeHistoryTimeline],
+  );
+
+  /** 누른 줄의 신호 기록을 띄운다 — 서식과 같은 자리(발송 상세)에서 부른다. */
+  const openHistoryTimeline = useCallback(
+    (r: HistoryJobRecipient) => {
+      const jobId = historyJob?.id ?? "";
+      if (!jobId || !r.id) return;
+      closeHistoryMail();
+      void loadHistoryTimeline(jobId, { id: r.id, companyName: r.companyName, email: r.email });
+    },
+    [historyJob, loadHistoryTimeline, closeHistoryMail],
   );
 
   const retryHistoryMail = useCallback(() => {
@@ -1631,6 +1810,7 @@ export function useBulkState() {
     (item: HistoryCompanyItem) => {
       const c = historyCompany;
       if (!c || !item.jobId || !item.recipientId) return;
+      closeHistoryTimeline();
       void loadHistoryMail(item.jobId, {
         id: item.recipientId,
         companyName: c.companyName,
@@ -1639,7 +1819,7 @@ export function useBulkState() {
         email: c.email,
       });
     },
-    [historyCompany, loadHistoryMail],
+    [historyCompany, loadHistoryMail, closeHistoryTimeline],
   );
 
   /**
@@ -1662,6 +1842,7 @@ export function useBulkState() {
   const openHistoryCompany = useCallback(async (key: string) => {
     const seq = ++historySeq.current;
     closeHistoryMail();
+    closeHistoryTimeline();
     setHistoryMode("companies");
     setHistoryView("company");
     setHistoryJob(null);
@@ -1683,18 +1864,19 @@ export function useBulkState() {
     } finally {
       if (seq === historySeq.current) setHistoryLoading(false);
     }
-  }, [closeHistoryMail]);
+  }, [closeHistoryMail, closeHistoryTimeline]);
 
   const closeHistoryDetail = useCallback(() => {
     historySeq.current += 1; // 돌아가는 중이던 상세 조회 응답은 버린다
     closeHistoryMail();
+    closeHistoryTimeline();
     setHistoryView("list");
     setHistoryJob(null);
     setHistoryJobRecipients([]);
     setHistoryCompany(null);
     setHistoryError("");
     setHistoryLoading(false);
-  }, [closeHistoryMail]);
+  }, [closeHistoryMail, closeHistoryTimeline]);
 
   // ── 단계 이동 가드 ───────────────────────────────────────────
   const targetsOk = canProceedWithTargets({
@@ -1953,6 +2135,8 @@ export function useBulkState() {
     restartSend,
     sendStartedAt,
     sendFinishedAt,
+    signalWaitMs,
+    openSendTimeline,
     // 발송 기록 탭
     historyActive,
     setHistoryActive,
@@ -1979,5 +2163,9 @@ export function useBulkState() {
     openHistoryCompanyMail,
     closeHistoryMail,
     retryHistoryMail,
+    historyTimeline,
+    openHistoryTimeline,
+    closeHistoryTimeline,
+    retryHistoryTimeline,
   };
 }

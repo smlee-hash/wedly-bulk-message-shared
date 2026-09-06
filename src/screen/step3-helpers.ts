@@ -547,3 +547,65 @@ export function canStopSend(job: {
   if (job.stopRequested === true) return false;
   return job.channelEmail === true && job.emailStatus === "running";
 }
+
+/* ────────────── 끝난 뒤 신호 이어받기(2026-09-07 2단계) ────────────── */
+
+/** 발송이 끝난 뒤 진행 조회를 다시 던지는 간격 — 도는 동안(2초)보다 느슨하게. */
+export const SIGNAL_POLL_INTERVAL_MS = 5_000;
+/** 끝난 뒤 신호를 이어받는 창. 이 시간이 지나면 멈춘다(영영 도는 조회를 남기지 않는다). */
+export const SIGNAL_POLL_WINDOW_MS = 120_000;
+
+/** 이 줄의 이메일이 「보냄」에서 더 나아갔나 — 도착·확인·반송·실패 중 하나라도 있으면 결론이 났다. */
+function emailSettled(r: {
+  emailStatus?: string | null;
+  emailDeliveredAt?: string | null;
+  emailBouncedAt?: string | null;
+  emailViewedAt?: string | null;
+}): boolean {
+  if (r.emailDeliveredAt || r.emailBouncedAt || r.emailViewedAt) return true;
+  const st = String(r.emailStatus ?? "").trim();
+  return st === "bounced" || st === "failed" || st === "complained" || st === "unsubscribed";
+}
+
+/**
+ * 발송이 끝난 뒤에도 진행 조회를 이어 갈까.
+ *
+ * ★도착·반송 신호는 **보낸 뒤 몇 초~몇 분 지나** 웹훅으로 들어온다. 예전에는 발송이 끝나는 순간
+ *  폴링이 멈춰(`sendRunning` 이 거짓이 되면 즉시 정지), 몇 초 뒤 오는 「도착」이 새로고침 전까지
+ *  화면에 안 나타났다.
+ * ★조건은 둘뿐이다 — ① 「보냄」까지만 찍히고 아직 결론이 안 난 사람이 있다 ② 끝난 뒤 120초 안이다.
+ *  **발송이 끝났는지는 여기서 안 본다**(부르는 쪽이 판단한다) — 그래야 이 판정을 시험이 잰다.
+ * ★진행 조회가 앞 N명만 줄 수도 있다(`progress.total > recipients.length`) — 그때는 보이는 줄만
+ *  근거로 삼는다. 못 본 줄 때문에 영영 도는 것보다 낫다.
+ */
+export function shouldKeepPollingSignals(
+  job:
+    | {
+        recipients?: Array<{
+          emailStatus?: string | null;
+          emailSentAt?: string | null;
+          emailDeliveredAt?: string | null;
+          emailBouncedAt?: string | null;
+          emailViewedAt?: string | null;
+        }> | null;
+      }
+    | null
+    | undefined,
+  elapsedMs: number,
+): boolean {
+  if (!job) return false;
+  if (!(elapsedMs >= 0) || elapsedMs >= SIGNAL_POLL_WINDOW_MS) return false;
+  const rows = Array.isArray(job.recipients) ? job.recipients : [];
+  // 「보냄」이 안 찍힌 줄은 아직 안 나간 것이라 신호를 기다릴 대상이 아니다.
+  return rows.some((r) => Boolean(r?.emailSentAt) && !emailSettled(r ?? {}));
+}
+
+/**
+ * 이어받는 동안 화면에 적는 한 줄 — 「도착·확인 신호를 N초 더 기다리는 중」.
+ * ★기다리지 않을 때(음수·창이 지남)는 빈 글자다 — 그래야 문구가 조용히 사라진다.
+ */
+export function signalWaitNotice(elapsedMs: number): string {
+  if (!(elapsedMs >= 0) || elapsedMs >= SIGNAL_POLL_WINDOW_MS) return "";
+  const left = Math.ceil((SIGNAL_POLL_WINDOW_MS - elapsedMs) / 1000);
+  return `도착·확인 신호를 ${left}초 더 기다리는 중`;
+}

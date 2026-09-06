@@ -1,6 +1,6 @@
 {
   "name": "@wedly/bulk-message-shared",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "WEDLY 단체 안내 발송 — 화면·규칙 공용 부품. ERP·일루아가 같은 커밋을 문다.",
   "main": "./src/index.ts",

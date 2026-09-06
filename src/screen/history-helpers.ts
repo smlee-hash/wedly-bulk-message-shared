@@ -81,6 +81,12 @@ export interface HistoryJobRecipient {
   emailViewedAt: string | null;
   /** 이 줄에 띄울 서식이 남아 있나(90일이 지나면 거짓). */
   hasMail: boolean;
+  /**
+   * 이 사람에게 쌓인 신호 기록 수(`BulkEmailEvent`).
+   * ★선택 칸이다 — 배포 교체 중 **옛 서버**가 안 실어 줄 수 있다. 그때는 숫자 없이 「기록」으로
+   *  그리고 단추는 그대로 눌린다(모른다고 잠그면 이미 쌓인 기록을 사람이 못 본다).
+   */
+  eventCount?: number;
 }
 
 /**
@@ -99,6 +105,123 @@ export interface HistoryMailState {
   error: string;
   /** 보관 기간이 지나 서버가 서식을 지웠다. */
   expired: boolean;
+}
+
+/* ────────────────────── 수신자 타임라인(2026-09-07 2단계) ────────────────────── */
+
+/**
+ * 타임라인 한 줄의 갈래 — 서버 `recipientTimeline` 이 주는 값.
+ * ★`kind` 를 이 목록으로 **좁히지 않는다**(아래 항목 타입은 넓은 string 이다) — 서버가 갈래를
+ *  늘렸을 때 화면이 통째로 죽는 것보다, 모르는 갈래를 무채색으로 그리는 쪽이 낫다.
+ */
+export type HistoryTimelineKind =
+  | "sent"
+  | "delivered"
+  | "bounced"
+  | "failed"
+  | "complained"
+  | "viewed"
+  | "attachment"
+  | "unsubscribed"
+  | "manual_email_entered"
+  | "chat_viewed";
+
+/** 타임라인 한 줄 — 서버가 시간 오름차순으로 준다. 글자는 서버가 정본이다(화면이 안 지어낸다). */
+export interface HistoryTimelineItem {
+  at: string;
+  kind: string;
+  title: string;
+  detail: string;
+}
+
+/**
+ * 「기록」 모달의 상태 — 누른 줄의 신원 + 서버가 준 항목.
+ * ★`null` 이면 모달이 닫혀 있다는 뜻이다(「서식 보기」 모달과 같은 방식).
+ * ★주소는 서버가 가려서 준다(`emailMasked`) — 원문 주소는 이 통로로 오지 않는다.
+ */
+export interface HistoryTimelineState {
+  recipientId: string;
+  companyName: string;
+  emailMasked: string;
+  emailSource: string;
+  subject: string;
+  senderName: string;
+  jobCreatedAt: string;
+  items: HistoryTimelineItem[];
+  loading: boolean;
+  error: string;
+}
+
+/** 항목 타일 색 — 딱지 정본과 같은 의미색 다섯 갈래. */
+export type TimelineTone = "blue" | "green" | "red" | "purple" | "muted";
+
+/**
+ * 갈래 → 타일 색(2026-09-07 서버 확정본의 열 갈래).
+ *
+ * ★색은 **뜻**으로 정한다 — 보냄·도착·알림톡 링크 열림은 통로가 움직인 일(파랑),
+ *  확인함·첨부 열람은 고객이 이메일 안에서 실제로 누른 일(초록), 반송·실패·스팸 신고·수신 거부는
+ *  막힌 것(빨강), 직접 입력은 사람이 손으로 한 일(보라).
+ * ★모르는 갈래는 무채색으로 그린다 — **숨기지 않는다.** 지어낸 뜻을 색으로 칠하지도 않는다.
+ */
+export function timelineTone(kind: string): TimelineTone {
+  const k = String(kind ?? "").trim();
+  if (k === "sent" || k === "delivered" || k === "chat_viewed") return "blue";
+  if (k === "viewed" || k === "attachment") return "green";
+  if (k === "bounced" || k === "failed" || k === "complained" || k === "unsubscribed") return "red";
+  if (k === "manual_email_entered") return "purple";
+  return "muted";
+}
+
+/** 빈 기록·오류의 제목과 다음 행동 — 없는 것과 못 읽은 것을 한 모양으로 두지 않는다. */
+export const TIMELINE_EMPTY_TITLE = "아직 기록이 없어요";
+export const TIMELINE_EMPTY_HINT =
+  "도착·확인 신호는 보낸 뒤 몇 초~몇 분 지나 들어옵니다. 잠시 뒤 다시 열어 보세요.";
+export const TIMELINE_ERROR_TITLE = "기록을 불러오지 못했어요";
+
+/** 「확인함」이 무슨 뜻인지 목록 밑에서 한 번 말한다(hover 로만 보이는 안내 금지). */
+export const TIMELINE_VIEWED_NOTE =
+  "「확인함」은 받은 분이 안내 안의 링크(브라우저에서 보기·첨부·수신 설정)를 열었을 때만 찍힙니다. 열어 봤어도 링크를 안 누르면 「도착」까지만 보입니다.";
+
+/** 모달 제목 — 회사 이름이 없으면 지어내지 않고 자리 이름만 쓴다. */
+export function timelineModalTitle(companyName: string | null | undefined): string {
+  const name = String(companyName ?? "").trim();
+  return name ? `이메일 기록 — ${name}` : "이메일 기록";
+}
+
+/** 머리 카드의 「받는 주소」 — 가린 주소 + 출처(모르면 주소만, 주소도 없으면 「—」). */
+export function timelineAddressLine(t: { emailMasked?: string; emailSource?: string }): string {
+  const addr = String(t.emailMasked ?? "").trim();
+  if (!addr) return "—";
+  const src = emailSourceLabel(t.emailSource, "email");
+  return src && src !== "—" ? `${addr} (${src})` : addr;
+}
+
+/**
+ * 표의 「기록」 단추 — 글자와 눌림 여부.
+ *
+ * ★건수를 **모르는 것**(옛 서버)과 **0건인 것**은 다르다. 모르면 숫자 없이 열어 볼 수 있게 두고,
+ *  0건이면 「없음」으로 잠근다(빈 모달을 띄우지 않는다 — 시안 4번째 줄).
+ */
+export function timelineButton(eventCount?: number | null): { label: string; enabled: boolean } {
+  if (eventCount == null) return { label: "기록", enabled: true };
+  const n = Number(eventCount);
+  if (!Number.isFinite(n)) return { label: "기록", enabled: true };
+  if (n <= 0) return { label: "없음", enabled: false };
+  return { label: `기록 ${Math.trunc(n).toLocaleString("ko-KR")}건`, enabled: true };
+}
+
+/**
+ * 타임라인 시각 — 「09-06 15:07:29」(보는 사람의 시간대, 초까지).
+ * ★초를 적는다 — 보냄·도착이 같은 분 안에 겹쳐 찍혀 분까지만 적으면 순서를 못 읽는다.
+ * ★값이 없거나 모양이 아니면 「—」 — 「Invalid Date」를 그리지 않는다.
+ */
+export function formatTimelineTime(iso: string | null | undefined): string {
+  const s = String(iso ?? "").trim();
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return "—";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 /** 회사 한 곳이 받은 안내 한 줄 — 서버 `CompanyHistoryItem`. */

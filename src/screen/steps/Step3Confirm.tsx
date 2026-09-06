@@ -20,6 +20,7 @@ import type { EmailAttachment } from "../../rules/email-body";
 import { MAX_RECIPIENTS } from "../limits";
 import { LOADING_TARGETS_HINT, emailMode, type BulkChannel } from "../step1-helpers";
 import { EMAIL_FROM_ADDRESS, EMAIL_SUBJECT_CHIP } from "../step2-helpers";
+import { timelineButton } from "../history-helpers";
 import {
   alimtalkBadgeOf,
   emailSignalOf,
@@ -27,13 +28,14 @@ import {
   progressHeadline,
   progressPercent,
   sendHeadline,
+  signalWaitNotice,
   type BulkPricing,
   type EmailChecklistItem,
   type RefundedNotice,
   type SkippedNotice,
 } from "../step3-helpers";
 import { SectionHead, won } from "../bulk-ui";
-import { type Progress, type Step } from "../useBulkState";
+import { type Progress, type RecipientRow, type Step } from "../useBulkState";
 
 /** 시각 한 마디 — 「10:12:03」. 이 화면에서 보낸 발송에만 값이 있다(되살린 화면엔 없다). */
 function clock(d: Date | null): string {
@@ -185,6 +187,13 @@ export interface Step3ConfirmProps {
   /** 끝난 발송인가 — 「새 발송 시작」을 그릴 조건(보내는 중에는 안 그린다). */
   canRestart: boolean;
   restartSend: () => void;
+  /** 현황 표의 「기록」 — 그 사람에게 찍힌 신호를 시간순으로 연다(2026-09-07 2단계). */
+  openTimeline: (r: RecipientRow) => void;
+  /**
+   * 발송이 끝난 뒤 신호를 이어받는 중이면 그 경과(ms), 아니면 음수.
+   * ★음수·창(120초)이 지난 값이면 문구가 스스로 사라진다(`signalWaitNotice`).
+   */
+  signalWaitMs: number;
 }
 
 export function Step3Confirm({
@@ -234,6 +243,8 @@ export function Step3Confirm({
   sendFinishedAt,
   canRestart,
   restartSend,
+  openTimeline,
+  signalWaitMs,
 }: Step3ConfirmProps) {
   // 「이메일 판을 그리나」는 한 곳에서만 정한다 — 자리마다 따로 판단하면 열은 없는데 값만 남는다.
   const emailShown = emailMode(channel);
@@ -241,6 +252,13 @@ export function Step3Confirm({
   // 진행 표는 **작업이 실제로 쓴 통로**를 따른다(새로고침 뒤엔 고르개가 기본값으로 돌아와 있다).
   const jobEmail = progress?.channelEmail ?? emailShown;
   const jobChat = progress?.channelChat ?? chatShown;
+  /** 발송이 끝난 뒤 늦게 오는 도착·확인 신호를 기다리는 중이면 그 한 줄(아니면 빈 글자). */
+  const waitNotice = signalWaitNotice(signalWaitMs);
+  /**
+   * 「기록」 열을 그리나 — 이메일 작업이고, **수신자 열쇠가 실려 온 줄이 있을 때만.**
+   * ★열쇠가 없으면 열어 볼 곳이 없다. 그때 열만 세우면 「—」로 가득 찬 빈 칸이 남는다.
+   */
+  const timelineShown = jobEmail && (progress?.recipients ?? []).some((r) => Boolean(r.id));
   // ★이메일이 섞인 작업은 status 가 처음부터 "done" 이라 그 값만 보면 시작하자마자 「끝났어요」가 뜬다.
   const headline = jobEmail ? sendHeadline(progress) : progressHeadline(progress?.status);
   const attachNames = emailAttachments.map((f) => f.fileName).join(" · ");
@@ -624,6 +642,20 @@ export function Step3Confirm({
                   )}
                   <Badge variant="default">남음 {won(remaining)}</Badge>
                 </div>
+                {/* ★끝난 뒤 신호 이어받기 — 도착·반송은 보낸 뒤 몇 초 지나 웹훅으로 들어온다.
+                    예전에는 발송이 끝나는 순간 갱신이 멈춰, 그 「도착」이 새로고침 전까지 안 보였다. */}
+                {jobEmail && waitNotice && (
+                  <p
+                    className="mt-2.5 flex flex-wrap items-center gap-2 text-wedly-hint text-wedly-t2 break-keep"
+                    aria-live="polite"
+                  >
+                    <span
+                      aria-hidden
+                      className="h-3 w-3 shrink-0 rounded-full border-2 border-wedly-bd border-t-wedly-accent motion-safe:animate-spin"
+                    />
+                    {waitNotice}
+                  </p>
+                )}
                 {/* ★위 상자가 같은 사실을 이미 말한다 — 새 응답에서는 이 두 줄을 그리지 않는다.
                     같은 뜻을 두 모양으로 그리면 담당자가 두 번 빠진 것으로 읽는다.
                     skipped 를 안 주던 옛 응답에서만 이 자리가 산다. */}
@@ -717,6 +749,7 @@ export function Step3Confirm({
                         {jobChat && <th scope="col" className="whitespace-nowrap px-3 py-2.5">알림 상태</th>}
                         {jobEmail && <th scope="col" className="min-w-[220px] whitespace-nowrap px-3 py-2.5">이메일</th>}
                         {jobEmail && <th scope="col" className="whitespace-nowrap px-3 py-2.5">이메일 신호</th>}
+                        {timelineShown && <th scope="col" className="whitespace-nowrap px-3 py-2.5">기록</th>}
                         <th scope="col" className="whitespace-nowrap px-3 py-2.5">실패한 이유</th>
                       </tr>
                     </thead>
@@ -755,6 +788,24 @@ export function Step3Confirm({
                             {jobEmail && (
                               <td className="whitespace-nowrap px-3 py-2">
                                 {signal ? <Badge variant={signal.variant}>{signal.label}</Badge> : <span className="text-wedly-sub text-wedly-t2">—</span>}
+                              </td>
+                            )}
+                            {timelineShown && (
+                              <td className="whitespace-nowrap px-3 py-2">
+                                {/* 건수를 모르면 숫자 없이 「기록」, 0건이면 「없음」으로 잠근다
+                                    (발송 기록 탭과 같은 판정 — timelineButton 이 정본). */}
+                                {(() => {
+                                  const rec = timelineButton(r.eventCount);
+                                  if (!rec.enabled) {
+                                    return <span className="text-wedly-hint text-wedly-muted">{rec.label}</span>;
+                                  }
+                                  if (!r.id) return <span className="text-wedly-sub text-wedly-t2">—</span>;
+                                  return (
+                                    <Button type="button" variant="link" size="xs" onClick={() => openTimeline(r)}>
+                                      {rec.label}
+                                    </Button>
+                                  );
+                                })()}
                               </td>
                             )}
                             {/* ★긴 사유를 한 줄에 가두지 않는다 — 줄바꿈을 허용해 잘리지 않게 한다(반려 6). */}

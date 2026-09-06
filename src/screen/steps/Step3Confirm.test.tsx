@@ -111,6 +111,8 @@ function props(over: Partial<Step3ConfirmProps> = {}): Step3ConfirmProps {
     sendFinishedAt: null,
     canRestart: false,
     restartSend: () => {},
+    openTimeline: () => {},
+    signalWaitMs: -1,
     ...over,
   };
 }
@@ -418,5 +420,78 @@ describe("끝난 뒤 새 발송 (2026-09-06 브라우저 QA 반려 7)", () => {
 
   it("발송 전(작업 번호가 없을 때)에는 아예 안 그린다", () => {
     expect(html({ jobId: "", canRestart: true })).not.toContain("새 발송 시작");
+  });
+});
+
+/* ────────────── 끝난 뒤 신호 이어받기·기록 단추(2026-09-07 2단계) ────────────── */
+
+describe("현황 표 — 줄마다 「기록」 단추", () => {
+  it("수신자 열쇠가 온 줄에만 「기록 N건」이 선다", () => {
+    const markup = html({
+      jobId: "job_1",
+      progress: progress({ recipients: [row({ id: "r1", eventCount: 3 })] }),
+    });
+    expect(markup).toContain(">기록</th>");
+    expect(markup).toContain("기록 3건");
+  });
+
+  it("건수를 안 주면 「기록」, 0건이면 「없음」", () => {
+    const some = html({ jobId: "job_1", progress: progress({ recipients: [row({ id: "r1" })] }) });
+    expect(some).toContain(">기록</button>");
+    const none = html({
+      jobId: "job_1",
+      progress: progress({ recipients: [row({ id: "r1", eventCount: 0 })] }),
+    });
+    expect(none).toContain("없음");
+    expect(none).not.toContain(">기록</button>");
+  });
+
+  it("★서버가 아직 수신자 열쇠를 안 실어 주면 열 자체를 안 그린다 — 빈 열을 세우지 않는다", () => {
+    const markup = html({ jobId: "job_1", progress: progress({ recipients: [row()] }) });
+    expect(markup).not.toContain(">기록</th>");
+  });
+
+  it("★알림톡·채팅 전용 작업에는 기록 열이 안 붙는다(회귀 0)", () => {
+    const markup = html({
+      channel: "chat",
+      jobId: "job_1",
+      progress: progress({
+        status: "running",
+        channelChat: true,
+        channelEmail: false,
+        emailStatus: "",
+        recipients: [row({ id: "r1", eventCount: 4 })],
+      }),
+    });
+    expect(markup).not.toContain(">기록</th>");
+    expect(markup).not.toContain("기록 4건");
+  });
+});
+
+describe("끝난 뒤 신호 이어받기 안내", () => {
+  it("기다리는 동안 남은 초를 적는다", () => {
+    const markup = html({
+      jobId: "job_1",
+      progress: progress({ emailStatus: "done" }),
+      signalWaitMs: 5_000,
+    });
+    expect(markup).toContain("도착·확인 신호를 115초 더 기다리는 중");
+  });
+
+  it("다 왔거나 창이 지나면 문구가 사라진다", () => {
+    for (const ms of [-1, 120_000, 200_000]) {
+      const markup = html({ jobId: "job_1", progress: progress({ emailStatus: "done" }), signalWaitMs: ms });
+      expect(markup, `signalWaitMs=${ms}`).not.toContain("더 기다리는 중");
+    }
+  });
+
+  it("알림톡·채팅 전용 작업에는 안 뜬다 — 이메일 신호를 안 기다린다", () => {
+    const markup = html({
+      channel: "chat",
+      jobId: "job_1",
+      progress: progress({ status: "done", channelChat: true, channelEmail: false, emailStatus: "" }),
+      signalWaitMs: 5_000,
+    });
+    expect(markup).not.toContain("더 기다리는 중");
   });
 });

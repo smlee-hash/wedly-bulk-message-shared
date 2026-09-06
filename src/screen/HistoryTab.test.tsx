@@ -128,6 +128,10 @@ function props(over: Partial<HistoryTabProps> = {}): HistoryTabProps {
     openCompanyMail: () => {},
     closeMail: () => {},
     retryMail: () => {},
+    timeline: null,
+    openTimeline: () => {},
+    closeTimeline: () => {},
+    retryTimeline: () => {},
     ...over,
   };
 }
@@ -674,5 +678,56 @@ describe("회사 상세", () => {
 
   it("서버가 열쇠를 안 줘서 잠긴다는 옛 사유 줄은 사라졌다", () => {
     expect(html).not.toContain("수신자 열쇠가 실려 오지 않습니다");
+  });
+});
+
+/* ────────────── 수신자 타임라인 단추(2026-09-07 2단계) ────────────── */
+
+describe("발송 상세 — 줄마다 「기록」 단추", () => {
+  const base: Partial<HistoryTabProps> = { view: "job", job: job() };
+
+  it("서버가 건수를 주면 「기록 N건」", () => {
+    const html = draw({ ...base, jobRecipients: [recipient({ eventCount: 5 })] });
+    expect(html).toContain("기록 5건");
+  });
+
+  it("건수를 안 주면 숫자 없이 「기록」 — 그래도 눌린다", () => {
+    const html = draw({ ...base, jobRecipients: [recipient()] });
+    expect(html).toContain(">기록<");
+    expect(html).not.toContain("기록 0건");
+  });
+
+  it("0건이면 「없음」으로 두고 못 누른다 — 빈 모달을 띄우지 않는다", () => {
+    const html = draw({ ...base, jobRecipients: [recipient({ eventCount: 0 })] });
+    expect(html).toContain("없음");
+    expect(html).not.toContain(">기록<");
+  });
+
+  it("「서식 보기」·「이 회사의 다른 발송 ›」은 그대로 남는다", () => {
+    const html = draw({ ...base, jobRecipients: [recipient({ eventCount: 2 })] });
+    expect(html).toContain("서식 보기");
+    expect(html).toContain("이 회사의 다른 발송");
+  });
+
+  it("타임라인 모달은 열려 있을 때만 그려진다", () => {
+    expect(draw({ ...base, jobRecipients: [recipient()] })).not.toContain("이메일 기록 —");
+    const open = draw({
+      ...base,
+      jobRecipients: [recipient()],
+      timeline: {
+        recipientId: "r1",
+        companyName: "(주)한빛정밀",
+        emailMasked: "ha***@hanbit.kr",
+        emailSource: "basic",
+        subject: "장려금 2차 서류 제출 안내",
+        senderName: "김민수",
+        jobCreatedAt: "2026-09-04T01:12:00.000Z",
+        items: [],
+        loading: false,
+        error: "",
+      },
+    });
+    expect(open).toContain("이메일 기록 — (주)한빛정밀");
+    expect(open).toContain("아직 기록이 없어요");
   });
 });

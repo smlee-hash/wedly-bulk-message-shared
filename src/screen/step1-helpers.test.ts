@@ -8,8 +8,11 @@ import {
   MANAGER_LOCKED_LABEL,
   MANAGER_UNKNOWN_LABEL,
   SEARCH_PLACEHOLDER,
+  BOUNCED_CHIP_LABEL,
   applyManualEmail,
+  bouncedNote,
   canProceedWithTargets,
+  isBouncedTarget,
   channelExcludeReason,
   channelNote,
   droppedSummary,
@@ -686,5 +689,53 @@ describe("pickedCounts", () => {
 
   it("빈 명단은 0", () => {
     expect(pickedCounts([], "both")).toEqual({ total: 0, email: 0 });
+  });
+});
+
+/* ────────────────────── 1단계 반송 표식(2026-09-07 2단계) ────────────────────── */
+
+describe("isBouncedTarget — 반송된 주소를 표에서 알아본다", () => {
+  it("사유는 기존 emailExcludeReason 열거에 늘어난 「반송됨」이다(2026-09-07 서버 확정본)", () => {
+    expect(isBouncedTarget({ emailExcludeReason: "반송됨" })).toBe(true);
+    expect(isBouncedTarget({ emailExcludeReason: "" })).toBe(false);
+    expect(isBouncedTarget({})).toBe(false);
+  });
+
+  it("다른 사유는 반송이 아니다 — 「이메일 없음」은 채우면 보낼 수 있는 줄이다", () => {
+    expect(isBouncedTarget({ emailExcludeReason: "이메일 없음" })).toBe(false);
+    expect(isBouncedTarget({ emailExcludeReason: "수신거부" })).toBe(false);
+  });
+
+  it("발송 칩은 「반송됨」을 빨강으로 그린다 — 금색(채우면 됨)으로 두면 같은 주소를 다시 넣는다", () => {
+    expect(excludeChipVariant("반송됨")).toBe("red");
+    expect(excludeChipVariant("이메일 없음")).toBe("yellow");
+    expect(
+      channelExcludeReason(
+        { sendable: true, excludeReason: "", email: "", emailSource: "", emailSendable: false, emailExcludeReason: "반송됨" },
+        "email",
+      ),
+    ).toBe("반송됨");
+  });
+});
+
+describe("bouncedNote — 되돌아온 주소와 날짜", () => {
+  it("가린 주소 + (월/일) — 시안 그대로", () => {
+    expect(bouncedNote({ bouncedEmail: "ds***@naver.com", bouncedAt: "2026-09-06T06:00:00.000Z" })).toMatch(
+      /^ds\*\*\*@naver\.com \(\d{1,2}\/\d{1,2}\)$/,
+    );
+  });
+
+  it("날짜가 없거나 모양이 아니면 주소만 — 「Invalid Date」를 그리지 않는다", () => {
+    expect(bouncedNote({ bouncedEmail: "ds***@naver.com" })).toBe("ds***@naver.com");
+    expect(bouncedNote({ bouncedEmail: "ds***@naver.com", bouncedAt: "어제" })).toBe("ds***@naver.com");
+  });
+
+  it("주소가 없으면 빈 글자 — 없는 주소를 지어내지 않는다", () => {
+    expect(bouncedNote({})).toBe("");
+    expect(bouncedNote({ bouncedAt: "2026-09-06T06:00:00.000Z" })).toBe("");
+  });
+
+  it("칩 글자는 시안 그대로다", () => {
+    expect(BOUNCED_CHIP_LABEL).toBe("반송됨 · 주소 확인");
   });
 });

@@ -359,7 +359,11 @@ export function channelExcludeReason<T extends ChannelTarget>(t: T, channel: Bul
   return reasons[0] === reasons[1] ? reasons[0] : reasons.join(" · ");
 }
 
-/** 아직 값이 없을 뿐인 사유 — 채우면 보낼 수 있다(금색). 나머지는 막힌 것이라 빨강. */
+/**
+ * 아직 값이 없을 뿐인 사유 — 채우면 보낼 수 있다(금색). 나머지는 막힌 것이라 빨강.
+ * ★「반송됨」은 여기 **안 넣는다** — 주소가 없는 게 아니라 넣었던 주소가 되돌아온 것이라
+ *  같은 주소를 다시 넣으면 또 막힌다(금색으로 두면 「채우면 된다」로 읽힌다).
+ */
 const SOFT_EXCLUDE_REASONS = new Set(["번호 없음", "이메일 없음"]);
 
 /** 발송 칩 색 — 사유 글자 하나만 보고 정한다(색과 글자가 어긋나지 않게). */
@@ -380,6 +384,50 @@ export function targetForChannel<T extends ChannelTarget>(t: T, channel: BulkCha
   const excludeReason = channelExcludeReason(t, channel);
   if (sendable === t.sendable && excludeReason === t.excludeReason) return t;
   return { ...t, sendable, excludeReason };
+}
+
+/* ────────────────────── 반송 표식(2026-09-07 2단계) ────────────────────── */
+
+/** 서버 `emailExcludeReason` 열거에 늘어난 값(2026-09-07) — 표식 판정의 정본 글자. */
+export const BOUNCED_REASON = "반송됨";
+/** 1단계 이메일 열의 반송 칩 글자 — 시안 그대로. */
+export const BOUNCED_CHIP_LABEL = "반송됨 · 주소 확인";
+
+/**
+ * 반송 표식이 실려 오는 칸들.
+ * ★사유는 **기존 `emailExcludeReason` 열거에 「반송됨」이 늘어난 것**이다(2026-09-07 서버 확정본) —
+ *  새 칸을 만들지 않았다. 주소·날짜 두 칸만 선택 칸이다(옛 응답에는 없다).
+ */
+export interface BouncedMark {
+  emailExcludeReason?: string;
+  /** 되돌아온 주소(가려서 온다). */
+  bouncedEmail?: string;
+  /** 되돌아온 날. */
+  bouncedAt?: string;
+}
+
+/**
+ * 이 줄의 주소가 되돌아왔나.
+ *
+ * ★「이메일 없음」과 뜻이 다르다 — 없는 것은 채우면 되지만, 반송은 **넣었던 주소가 틀렸다**는
+ *  사실이다. 한 모양으로 두면 담당자는 같은 주소를 다시 넣는다.
+ */
+export function isBouncedTarget(t: BouncedMark): boolean {
+  return String(t.emailExcludeReason ?? "").trim() === BOUNCED_REASON;
+}
+
+/**
+ * 반송 칩 옆에 적을 한 마디 — 「ds***@naver.com (9/6)」.
+ * ★주소가 없으면 빈 글자(지어내지 않는다), 날짜가 모양이 아니면 주소만 적는다.
+ */
+export function bouncedNote(t: { bouncedEmail?: string; bouncedAt?: string }): string {
+  const addr = String(t.bouncedEmail ?? "").trim();
+  if (!addr) return "";
+  const raw = String(t.bouncedAt ?? "").trim();
+  if (!raw) return addr;
+  const d = new Date(raw);
+  if (!Number.isFinite(d.getTime())) return addr;
+  return `${addr} (${d.getMonth() + 1}/${d.getDate()})`;
 }
 
 /** 손으로 넣은 이메일 — `persist` 는 「고객 자료에도 저장」 스위치. */

@@ -14,15 +14,18 @@ import { Input } from "../../ui/Input";
 import { cn } from "../../ui/cn";
 import { MAX_RECIPIENTS } from "../limits";
 import {
+  BOUNCED_CHIP_LABEL,
   CHANNEL_OPTIONS,
   LOADING_TARGETS_HINT,
   MANAGER_LOCKED_LABEL,
   MANAGER_UNKNOWN_LABEL,
   SEARCH_PLACEHOLDER,
+  bouncedNote,
   channelNote,
   droppedSummary,
   emailMode,
   excludeChipVariant,
+  isBouncedTarget,
   isRefunded,
   managerControl,
   statusBadgesOf,
@@ -37,10 +40,14 @@ import { LoadingStat, SectionHead, displayPhone, won } from "../bulk-ui";
 import { keyOf, type ManualEmailEdit, type Step, type Target } from "../useBulkState";
 
 /**
- * 표의 이메일 칸 하나 — 세 가지 모습.
+ * 표의 이메일 칸 하나 — 네 가지 모습.
  *  ① 고치는 중: 입력창 + 확인·취소 + 「고객 자료에도 저장」 + (오류면) 빨간 한 줄
  *  ② 주소가 있음: 주소 + (손으로 넣은 것이면) 「직접 입력」 딱지
- *  ③ 주소가 없음: — 과 「직접 입력」 단추
+ *  ③ 주소가 되돌아옴: 「반송됨 · 주소 확인」 빨간 칩 + 되돌아온 주소·날짜 + 「직접 입력」 단추
+ *  ④ 주소가 없음: — 과 「직접 입력」 단추
+ *
+ * ★③ 을 ④ 와 한 모양으로 두면(예전엔 둘 다 「이메일 없음」) 담당자는 **틀린 주소를 다시 넣는다.**
+ *  없는 것은 채우면 되지만, 반송은 넣었던 주소가 되돌아왔다는 사실이다.
  */
 function EmailCell({
   row,
@@ -120,6 +127,20 @@ function EmailCell({
         {/* 주소에는 띄어쓰기가 없어 break-keep 으로는 못 접는다 — 여기만 글자 단위로 접는다. */}
         <span className="min-w-0 break-all">{row.email}</span>
         {manual && <Badge variant="blue">직접 입력 · {manual.persist ? "자료 저장" : "이번만"}</Badge>}
+      </span>
+    );
+  }
+  if (isBouncedTarget(row)) {
+    const note = bouncedNote(row);
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <Badge variant="red">{BOUNCED_CHIP_LABEL}</Badge>
+        {/* 되돌아온 주소는 **가려서** 온다 — 무엇이 틀렸는지 알아볼 만큼만 보여 준다.
+            주소를 못 받았으면 아무 말도 지어내지 않는다(칩만 세운다). */}
+        {note && <span className="min-w-0 break-all text-wedly-hint text-wedly-muted">{note}</span>}
+        <Button type="button" size="xs" variant="secondary" onClick={onStart}>
+          직접 입력
+        </Button>
       </span>
     );
   }
