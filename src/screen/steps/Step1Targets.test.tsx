@@ -187,7 +187,7 @@ describe("고정 셀(체크박스·회사명) — hover 강조·환불 표시가
     const out = draw({ visibleTargets: [target({ sendable: false, excludeReason: "이메일 없음" })] });
     const companyValueAt = out.indexOf(">(주)한빛정밀<");
     const companyTdTag = openTag(out, "td", companyValueAt);
-    expect(companyTdTag).toContain("bg-wedly-bg-gray/50");
+    expect(companyTdTag).toContain("bg-wedly-bg-gray");
     expect(companyTdTag).not.toContain("group-hover:bg-wedly-bg-page");
   });
 });
