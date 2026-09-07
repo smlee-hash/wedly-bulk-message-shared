@@ -90,7 +90,7 @@ describe("2단계 이메일 — 시안의 자리가 다 있다", () => {
   it("받은편지함 카드 — 발신자·[WEDLY] 칩·제목·미리보기 문구를 눌러 고친다", () => {
     expect(markup).toContain("받은편지함에서 이렇게 보여요");
     expect(markup).toContain("WEDLY 김민수");
-    expect(markup).toContain("consulting@wedly.kr");
+    expect(markup).toContain("cunsulting@wedly.kr");
     expect(markup).toContain("[WEDLY]");
     expect(markup).toContain('aria-label="메일 제목"');
     expect(markup).toContain('aria-label="받은편지함 미리보기 문구"');

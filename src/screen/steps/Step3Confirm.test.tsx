@@ -137,7 +137,7 @@ describe("3단계 이메일 — 시안의 자리가 다 있다", () => {
   });
 
   it("보내는 이름은 담당자 이름 + 고정 발신 주소, 회신은 담당자 메일", () => {
-    expect(markup).toContain("WEDLY 김민수 &lt;consulting@wedly.kr&gt;");
+    expect(markup).toContain("WEDLY 김민수 &lt;cunsulting@wedly.kr&gt;");
     expect(markup).toContain("발신 주소는 고정, 이름만 담당자");
     expect(markup).toContain("minsu.kim@wedly.kr");
   });

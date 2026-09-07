@@ -222,8 +222,8 @@ export function testSendAllowed(input: {
 
 /** 서식 미리보기 다시 그리기 디바운스 — 원문 변환(0.7초)보다 짧게. */
 export const PREVIEW_DEBOUNCE_MS = 300;
-/** 발신 주소(고정). 표시이름만 담당자 이름이 붙는다. */
-export const EMAIL_FROM_ADDRESS = "consulting@wedly.kr";
+/** 발신 주소(고정 — 서버 email-constants 의 실계정과 같은 철자 `cunsulting`). 표시이름만 담당자 이름이 붙는다. */
+export const EMAIL_FROM_ADDRESS = "cunsulting@wedly.kr";
 /** 제목 앞에 늘 붙는 칩 — 담당자가 지울 수 없다. */
 export const EMAIL_SUBJECT_CHIP = "[WEDLY]";
 /** 제목 권장 상한. 휴대폰 받은편지함이 25자쯤에서 자른다. **막지는 않는다**(3단계도 경고까지). */

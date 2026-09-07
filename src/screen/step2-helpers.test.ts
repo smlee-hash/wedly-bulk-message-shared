@@ -659,7 +659,7 @@ describe("이메일 2단계 고정 문구", () => {
   });
 
   it("발신 주소·제목 앞머리는 고정이다", () => {
-    expect(EMAIL_FROM_ADDRESS).toBe("consulting@wedly.kr");
+    expect(EMAIL_FROM_ADDRESS).toBe("cunsulting@wedly.kr");
     expect(EMAIL_SUBJECT_CHIP).toBe("[WEDLY]");
   });
 
