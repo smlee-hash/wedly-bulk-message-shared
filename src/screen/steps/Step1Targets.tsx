@@ -426,8 +426,10 @@ export function Step1Targets({
           <div className="max-h-[440px] overflow-auto rounded-2xl border border-wedly-bd" aria-busy={loadingTargets}>
             {/* ★휴대폰 폭(390px) 실측(2026-09-06): 열 최소 폭 합(체크박스 40+회사명 120+구분 112+대표명 72+
                 연락처 120+이메일 280+계약일 96+진행상태 88+담당 72+발송 150=1150)보다 표 폭이 작으면
-                안 됨 — 720 은 그 합보다 작아 헤더가 눌렸다. 「구분」 칸을 더한(2026-10-07) 만큼 1040→1160. */}
-            <table className="w-full min-w-[1160px] border-collapse">
+                안 됨 — 720 은 그 합보다 작아 헤더가 눌렸다. 「구분」 칸을 더한(2026-10-07) 만큼 1040→1160.
+                ★1440 화면 실측(2026-10-07): 표 상자는 1064px 이라 1160 을 늘 걸면 알림톡만 보낼 때도 가로로
+                밀렸다. 이메일 칸(280)이 없으면 열 합이 870 이므로 그때만 880 으로 줄인다. */}
+            <table className={cn("w-full border-collapse", emailShown ? "min-w-[1160px]" : "min-w-[880px]")}>
               {/* 표 머리 글자 크기는 머리 묶음이 정한다 — 줄·칸에 크기를 적으면 그것이 이겨서 층이 어긋난다 */}
               <thead className="text-wedly-tablehead">
                 <tr className="bg-wedly-accent text-left font-semibold text-white">

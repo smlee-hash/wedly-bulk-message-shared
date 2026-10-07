@@ -355,3 +355,27 @@ describe("「계약한 고객」 카드 — 정책자금 줄이 있을 때만 �
     expect(out).not.toContain("정책자금 0");
   });
 });
+
+/* ────────────── 표 최소 폭 — 이메일 칸이 보일 때만 넓힌다(2026-10-07 배포본 1440 실측) ────────────── */
+
+describe("표 최소 폭 — 알림톡만 보낼 때는 1440 화면 안에 들어간다", () => {
+  function tableTag(markup: string): string {
+    const at = markup.indexOf("<table");
+    expect(at, "표").toBeGreaterThan(0);
+    return markup.slice(at, markup.indexOf(">", at));
+  }
+
+  it("알림톡만(chat) 보낼 때는 이메일 칸이 없으니 880px 로 줄인다", () => {
+    const tag = tableTag(draw({ channel: "chat" }));
+    expect(tag).toContain("min-w-[880px]");
+    expect(tag).not.toContain("min-w-[1160px]");
+  });
+
+  it("이메일이 보이는 「둘 다」·「이메일」은 1160px 그대로다", () => {
+    for (const channel of ["both", "email"] as const) {
+      const tag = tableTag(draw({ channel }));
+      expect(tag, channel).toContain("min-w-[1160px]");
+      expect(tag, channel).not.toContain("min-w-[880px]");
+    }
+  });
+});
