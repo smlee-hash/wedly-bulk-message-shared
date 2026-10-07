@@ -15,6 +15,7 @@ import {
   isBouncedTarget,
   channelExcludeReason,
   channelNote,
+  contractCardLabel,
   droppedSummary,
   emailMode,
   emailTargetCounts,
@@ -26,6 +27,8 @@ import {
   pickedCounts,
   reconcilePicked,
   sendableForChannel,
+  sourceBadgeOf,
+  sourceCounts,
   statusBadgesOf,
   step1ListPhase,
   targetForChannel,
@@ -39,6 +42,7 @@ import {
   uniqueManagers,
   type BulkChannel,
   type ChannelTarget,
+  type TargetSource,
 } from "./step1-helpers";
 
 const t = (manager: string) => ({ manager });
@@ -550,6 +554,58 @@ describe("emailTargetCounts", () => {
 
   it("빈 목록은 전부 0", () => {
     expect(emailTargetCounts([], "both")).toEqual({ contract: 0, chatOk: 0, emailOk: 0, excluded: 0 });
+  });
+});
+
+describe("자료 구분(2026-10-07) — sourceBadgeOf · sourceCounts · contractCardLabel", () => {
+  it("딱지는 정부지원금 blue · 정책자금 purple, 값이 없으면 null(칸에 「—」)", () => {
+    expect(sourceBadgeOf("government-subsidy")).toEqual({ label: "정부지원금", variant: "blue" });
+    expect(sourceBadgeOf("policy-fund")).toEqual({ label: "정책자금", variant: "purple" });
+    expect(sourceBadgeOf(undefined)).toBeNull();
+    // 서버가 모르는 값을 실어 줘도 지어낸 글자를 그리지 않는다
+    expect(sourceBadgeOf("etc" as string as TargetSource)).toBeNull();
+  });
+
+  it("자료별 수 — source 없는 줄은 정부지원금으로 센다", () => {
+    const rows: Array<{ source?: TargetSource }> = [
+      { source: "government-subsidy" },
+      {}, // 옛 서버 · 붙여넣은 줄
+      { source: "policy-fund" },
+      { source: "policy-fund" },
+    ];
+    expect(sourceCounts(rows)).toEqual({ governmentSubsidy: 2, policyFund: 2 });
+  });
+
+  it("두 수를 더하면 늘 줄 수와 같다 — 모르는 값도 정부지원금 쪽", () => {
+    const rows: Array<{ source?: TargetSource }> = [
+      { source: "etc" as string as TargetSource },
+      { source: "policy-fund" },
+      {},
+    ];
+    const c = sourceCounts(rows);
+    expect(c.governmentSubsidy + c.policyFund).toBe(rows.length);
+    expect(c).toEqual({ governmentSubsidy: 2, policyFund: 1 });
+  });
+
+  it("빈 목록은 전부 0", () => {
+    expect(sourceCounts([])).toEqual({ governmentSubsidy: 0, policyFund: 0 });
+  });
+
+  it("정책자금이 1건 이상이면 제목에 자료별 수를 붙인다", () => {
+    expect(contractCardLabel("계약한 고객", { governmentSubsidy: 12, policyFund: 3 })).toBe(
+      "계약한 고객 · 정부지원금 12 · 정책자금 3",
+    );
+    expect(contractCardLabel("검색에 걸린 고객", { governmentSubsidy: 0, policyFund: 1 })).toBe(
+      "검색에 걸린 고객 · 정부지원금 0 · 정책자금 1",
+    );
+    expect(contractCardLabel("계약한 고객", { governmentSubsidy: 1234, policyFund: 1 })).toBe(
+      "계약한 고객 · 정부지원금 1,234 · 정책자금 1",
+    );
+  });
+
+  it("정책자금이 0건이면 제목 그대로다(옛 서버·정부지원금만인 담당)", () => {
+    expect(contractCardLabel("계약한 고객", { governmentSubsidy: 5, policyFund: 0 })).toBe("계약한 고객");
+    expect(contractCardLabel("검색에 걸린 고객", { governmentSubsidy: 0, policyFund: 0 })).toBe("검색에 걸린 고객");
   });
 });
 

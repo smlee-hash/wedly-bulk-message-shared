@@ -262,3 +262,96 @@ describe("반송된 주소는 표에서 알아본다 — 「이메일 없음」�
     expect(markup).not.toContain("(undefined)");
   });
 });
+
+/* ────────────── 「구분」 칸 · 자료별 수(2026-10-07) ────────────── */
+
+describe("「구분」 칸 — 회사명 바로 다음에 서고, 자료마다 딱지가 다르다", () => {
+  /** 회사명 칸 바로 다음 칸(td) 하나를 통째로 꺼낸다 — 「구분」 칸이다. */
+  function sourceCell(markup: string): string {
+    const companyAt = markup.indexOf(">(주)한빛정밀<");
+    expect(companyAt, "회사명 값 칸").toBeGreaterThan(0);
+    const start = markup.indexOf("<td", companyAt);
+    expect(start, "회사명 다음 칸").toBeGreaterThan(companyAt);
+    return markup.slice(start, markup.indexOf("</td>", start));
+  }
+
+  it("표 머리에서 회사명과 대표명 사이에 「구분」 th 가 있고, 최소 폭은 주되 왼쪽 고정은 아니다", () => {
+    const out = draw();
+    const companyAt = out.indexOf(">회사명<");
+    const sourceAt = out.indexOf(">구분<");
+    const repAt = out.indexOf(">대표명<");
+    expect(companyAt).toBeGreaterThan(0);
+    expect(sourceAt, "구분 th").toBeGreaterThan(companyAt);
+    expect(repAt).toBeGreaterThan(sourceAt);
+    const thTag = out.slice(out.lastIndexOf("<th", sourceAt), sourceAt);
+    expect(thTag).toContain("min-w-[112px]");
+    expect(thTag).toContain("whitespace-nowrap");
+    expect(thTag).not.toContain("left-");
+  });
+
+  it("정부지원금 줄은 파란 딱지다", () => {
+    const cell = sourceCell(draw({ visibleTargets: [target({ source: "government-subsidy" })] }));
+    expect(cell).toContain(">정부지원금<");
+    expect(cell).toContain("bg-wedly-accent");
+    expect(cell).not.toContain("bg-wedly-purple");
+  });
+
+  it("정책자금 줄은 보라 딱지다", () => {
+    const cell = sourceCell(draw({ visibleTargets: [target({ source: "policy-fund" })] }));
+    expect(cell).toContain(">정책자금<");
+    expect(cell).toContain("bg-wedly-purple");
+    expect(cell).not.toContain("bg-wedly-accent");
+  });
+
+  it("source 가 없으면(옛 서버) 딱지 없이 「—」 하나만 서고 깨지지 않는다", () => {
+    const cell = sourceCell(draw({ visibleTargets: [target()] }));
+    expect(cell).toContain(">—<");
+    expect(cell).toContain("text-wedly-t2");
+    expect(cell).not.toContain("정부지원금");
+    expect(cell).not.toContain("정책자금");
+    expect(cell).not.toContain("rounded-full");
+  });
+
+  it("통로를 바꿔 이메일 열이 빠져도 「구분」 칸은 그대로 있다", () => {
+    const cell = sourceCell(draw({ channel: "chat", visibleTargets: [target({ source: "policy-fund" })] }));
+    expect(cell).toContain(">정책자금<");
+  });
+
+  it("빈 줄·불러오는 줄의 colSpan 은 칸 수에 맞는다 — 이메일 열이 있으면 10, 없으면 9", () => {
+    const cases: Array<Partial<Step1TargetsProps>> = [
+      { loadingTargets: true },
+      { visibleTargets: [], sendableTargets: [] },
+    ];
+    for (const over of cases) {
+      expect(draw({ ...over, channel: "both" }), "이메일 열 있음").toMatch(/colspan="10"/i);
+      expect(draw({ ...over, channel: "chat" }), "이메일 열 없음").toMatch(/colspan="9"/i);
+    }
+  });
+});
+
+describe("「계약한 고객」 카드 — 정책자금 줄이 있을 때만 자료별 수가 붙는다", () => {
+  const gov = target({ rowId: "g-1", source: "government-subsidy" });
+  const noSource = target({ rowId: "g-2" }); // 옛 서버·붙여넣은 줄 — 정부지원금으로 센다
+  const policy = target({ rowId: "p-1", source: "policy-fund" });
+
+  it("정책자금이 1건 이상이면 「계약한 고객 · 정부지원금 N · 정책자금 M」", () => {
+    const rows = [gov, noSource, policy];
+    const out = draw({ visibleTargets: rows, sendableTargets: rows });
+    expect(out).toContain("계약한 고객 · 정부지원금 2 · 정책자금 1");
+  });
+
+  it("검색 중이면 「검색에 걸린 고객 · …」으로 같은 수가 붙는다", () => {
+    const rows = [gov, policy];
+    const out = draw({ search: "한빛", visibleTargets: rows, sendableTargets: rows });
+    expect(out).toContain("검색에 걸린 고객 · 정부지원금 1 · 정책자금 1");
+    expect(out).not.toContain("계약한 고객 ·");
+  });
+
+  it("정책자금이 0건이면 지금 그대로다 — 자료별 수를 붙이지 않는다", () => {
+    const rows = [gov, noSource];
+    const out = draw({ visibleTargets: rows, sendableTargets: rows });
+    expect(out).toContain("계약한 고객");
+    expect(out).not.toContain("계약한 고객 ·");
+    expect(out).not.toContain("정책자금 0");
+  });
+});

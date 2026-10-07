@@ -515,8 +515,8 @@ export function BulkMessageManual() {
               label="받을 분 고르기"
               items={[
                 <>
-                  <K>누가 올라오나</K> 상세창 「정부지원금 → 계약정보」에 <b className="font-semibold text-wedly-t1">계약일이 적힌 고객</b>.
-                  진행상태는 보지 않습니다
+                  <K>누가 올라오나</K> 상세창 「정부지원금 또는 정책자금 → 계약정보」에 <b className="font-semibold text-wedly-t1">계약일이 적힌 고객</b>.
+                  진행상태는 보지 않습니다. 두 자료에 같은 번호가 있으면 정부지원금 줄 하나만 보내고 정책자금 줄은 중복 번호로 빠집니다
                 </>,
                 <>
                   <K>찾기</K> 상호명·대표자명·연락처를 한 칸에서 찾습니다. 연락처는 뒷자리 네 개만 쳐도 됩니다
@@ -558,7 +558,7 @@ export function BulkMessageManual() {
             />
             <Row
               label={<Badge variant="blue">범위 밖</Badge>}
-              items={["이 앱에서 볼 수 있는 정부지원금 고객이 아님 (파트너 앱). 담당자에게 문의"]}
+              items={["이 앱에서 볼 수 있는 정부지원금·정책자금 고객이 아님 (파트너 앱). 담당자에게 문의"]}
             />
           </div>
         </section>
@@ -693,8 +693,8 @@ export function BulkMessageManual() {
               .{" "}
               <b className="font-semibold text-wedly-t1">둘째</b>, 검색 칸에 글자가 남아 있으면 그 조건에 맞는
               고객만 보입니다 — 검색어를 지워 보세요.{" "}
-              <b className="font-semibold text-wedly-t1">셋째</b>, 그래도 없으면 상세창 「정부지원금 → 계약정보
-              → 계약일」이 비어 있는 것입니다. 계약일을 채우면 바로 보입니다.
+              <b className="font-semibold text-wedly-t1">셋째</b>, 그래도 없으면 상세창 「정부지원금 또는 정책자금
+              → 계약정보 → 계약일」이 비어 있는 것입니다. 계약일을 채우면 바로 보입니다.
             </Faq>
             <Faq q="「시험 발송은 하루 N건까지예요」가 떠요">
               {`하루 ${TEST_SEND_CAP_STAFF}건(파트너 앱 ${TEST_SEND_CAP_PARTNER}건)입니다. 내일 다시 할 수 있고, 실패한 건은 횟수를 돌려줍니다.`}

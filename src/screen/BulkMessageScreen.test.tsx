@@ -144,7 +144,7 @@ describe("1단계 채널 구간 단추 — 첫 그림은 「알림톡·채팅」
     // 자리마다 따로 판단하면 한 곳이 빠져 열은 없는데 값만 남는 어긋남이 생긴다.
     expect(step1Source).toContain("const emailShown = emailMode(channel);");
     expect(step1Source).toContain("{emailShown && (");
-    expect(step1Source).toContain("colSpan={emailShown ? 9 : 8}");
+    expect(step1Source).toContain("colSpan={emailShown ? 10 : 9}");
   });
 
   it("숫자 카드는 네 장이고 알림톡·채팅일 때 이메일 칸은 「—」다", () => {

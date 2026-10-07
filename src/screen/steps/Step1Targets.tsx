@@ -22,12 +22,15 @@ import {
   SEARCH_PLACEHOLDER,
   bouncedNote,
   channelNote,
+  contractCardLabel,
   droppedSummary,
   emailMode,
   excludeChipVariant,
   isBouncedTarget,
   isRefunded,
   managerControl,
+  sourceBadgeOf,
+  sourceCounts,
   statusBadgesOf,
   type BulkChannel,
   type EmailTargetCounts,
@@ -232,6 +235,8 @@ export function Step1Targets({
   hiddenPicked,
 }: Step1TargetsProps) {
   const emailShown = emailMode(channel);
+  // 자료별 수는 표의 줄(visibleTargets)에서 센다 — 숫자 카드의 계약 수와 같은 줄들이다.
+  const contractLabel = contractCardLabel(search.trim() ? "검색에 걸린 고객" : "계약한 고객", sourceCounts(visibleTargets));
   return (
         <Card>
           <SectionHead
@@ -376,7 +381,7 @@ export function Step1Targets({
               <>
                 <StatCard
                   icon={Users}
-                  label={search.trim() ? "검색에 걸린 고객" : "계약한 고객"}
+                  label={contractLabel}
                   value={`${won(targetCounts.contract)}명`}
                 />
                 <StatCard icon={MessageSquare} label="알림톡 가능" value={`${won(targetCounts.chatOk)}명`} />
@@ -419,10 +424,10 @@ export function Step1Targets({
           )}
 
           <div className="max-h-[440px] overflow-auto rounded-2xl border border-wedly-bd" aria-busy={loadingTargets}>
-            {/* ★휴대폰 폭(390px) 실측(2026-09-06): 열 최소 폭 합(체크박스 40+회사명 120+대표명 72+
-                연락처 120+이메일 280+계약일 96+진행상태 88+담당 72+발송 150=1038)보다 표 폭이 작으면
-                안 됨 — 720 은 그 합보다 작아 헤더가 눌렸다. */}
-            <table className="w-full min-w-[1040px] border-collapse">
+            {/* ★휴대폰 폭(390px) 실측(2026-09-06): 열 최소 폭 합(체크박스 40+회사명 120+구분 112+대표명 72+
+                연락처 120+이메일 280+계약일 96+진행상태 88+담당 72+발송 150=1150)보다 표 폭이 작으면
+                안 됨 — 720 은 그 합보다 작아 헤더가 눌렸다. 「구분」 칸을 더한(2026-10-07) 만큼 1040→1160. */}
+            <table className="w-full min-w-[1160px] border-collapse">
               {/* 표 머리 글자 크기는 머리 묶음이 정한다 — 줄·칸에 크기를 적으면 그것이 이겨서 층이 어긋난다 */}
               <thead className="text-wedly-tablehead">
                 <tr className="bg-wedly-accent text-left font-semibold text-white">
@@ -438,6 +443,8 @@ export function Step1Targets({
                       「누구 줄인지」가 안 사라지게. z-20 은 이 줄의 다른 th(z-10)보다 위에 그리기 위함
                       (안 그러면 세로 고정 머리 위에서 뒤 열이 이 열을 덮어 비쳐 보인다). */}
                   <th scope="col" className="sticky top-0 left-10 z-20 min-w-[120px] whitespace-nowrap bg-wedly-accent px-3 py-2.5 shadow-[1px_0_0_var(--wedly-bd)]">회사명</th>
+                  {/* 「구분」 딱지(정부지원금)가 한 줄로 서려면 이 열이 그만큼은 있어야 한다. 왼쪽 고정은 아니고 머리 세로 고정만 다른 열과 같다. */}
+                  <th scope="col" className="sticky top-0 z-10 min-w-[112px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">구분</th>
                   <th scope="col" className="sticky top-0 z-10 min-w-[72px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">대표명</th>
                   <th scope="col" className="sticky top-0 z-10 min-w-[120px] whitespace-nowrap bg-wedly-accent px-3 py-2.5">연락처</th>
                   {emailShown && (
@@ -455,13 +462,13 @@ export function Step1Targets({
               <tbody>
                 {loadingTargets ? (
                   <tr>
-                    <td colSpan={emailShown ? 9 : 8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
+                    <td colSpan={emailShown ? 10 : 9} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted">
                       불러오는 중…
                     </td>
                   </tr>
                 ) : visibleTargets.length === 0 ? (
                   <tr>
-                    <td colSpan={emailShown ? 9 : 8} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
+                    <td colSpan={emailShown ? 10 : 9} className="px-3 py-10 text-center text-wedly-sub text-wedly-muted break-keep">
                       {search.trim()
                         ? "검색어와 맞는 고객이 없어요. 다른 말로 찾아 보세요."
                         : loadedOnce
@@ -475,6 +482,7 @@ export function Step1Targets({
                     // 3단계 경고도 같은 함수(isRefunded)를 봐야 표와 경고가 어긋나지 않는다.
                     const refunded = isRefunded(t);
                     const statusBadges = statusBadgesOf(t.statuses);
+                    const sourceBadge = sourceBadgeOf(t.source);
                     return (
                     <tr
                       key={`${keyOf(t)}-${i}`}
@@ -509,6 +517,14 @@ export function Step1Targets({
                       >
                         {/* 긴 상호가 화면을 덮지 않게 안쪽 div 에서 줄임표로 자른다(2026-09-06 반려 3). */}
                         <div className="max-w-[160px] truncate" title={t.companyName || undefined}>{t.companyName || "—"}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {/* 글자와 색이 같은 값에서 나온다(sourceBadgeOf). 서버가 source 를 안 실어 주면 「—」. */}
+                        {sourceBadge ? (
+                          <Badge variant={sourceBadge.variant} className="whitespace-nowrap">{sourceBadge.label}</Badge>
+                        ) : (
+                          <span className="text-wedly-hint text-wedly-t2">—</span>
+                        )}
                       </td>
                       <td className={cn("whitespace-nowrap px-3 py-2 text-wedly-sub", t.sendable ? "text-wedly-t1" : "text-wedly-t2")}>
                         {t.representative || "—"}

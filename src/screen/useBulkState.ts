@@ -44,6 +44,7 @@ import {
   type ManagerLock,
   type ManualEmail,
   type PickedDrop,
+  type TargetSource,
 } from "./step1-helpers";
 import {
   ATTACH_TOO_LARGE_NOTICE,
@@ -145,6 +146,11 @@ export interface Target extends ChannelTarget {
    */
   bouncedEmail?: string;
   bouncedAt?: string;
+  /**
+   * 어느 자료의 줄인가(2026-10-07 「구분」 칸) — 정부지원금 또는 정책자금.
+   * ★**선택 칸**이라 옛 서버 응답에는 없다 — 없으면 칸에 「—」, 숫자 카드는 정부지원금으로 센다(화면이 깨지지 않는다).
+   */
+  source?: TargetSource;
 }
 
 export interface FailedRow {

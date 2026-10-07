@@ -474,6 +474,44 @@ export function emailTargetCounts<T extends ChannelTarget>(
   return { contract: targets.length, chatOk, emailOk, excluded };
 }
 
+/* ────────────────────── 자료 구분(2026-10-07) ────────────────────── */
+
+/**
+ * 줄이 어느 자료에서 왔나 — 서버가 줄마다 실어 준다.
+ * ★선택 칸이다: 옛 서버·붙여넣은 줄에는 없고, 없으면 정부지원금으로 읽는다(정책자금이 뒤에 생겼다).
+ */
+export type TargetSource = "government-subsidy" | "policy-fund";
+
+/** 「구분」 칸 딱지 — 글자와 색이 한 곳에서 나온다. 값이 없으면 null(칸에 「—」). */
+export function sourceBadgeOf(source?: TargetSource): { label: string; variant: "blue" | "purple" } | null {
+  if (source === "government-subsidy") return { label: "정부지원금", variant: "blue" };
+  if (source === "policy-fund") return { label: "정책자금", variant: "purple" };
+  return null;
+}
+
+export interface SourceCounts {
+  governmentSubsidy: number;
+  policyFund: number;
+}
+
+/** 자료별 줄 수 — 정책자금이 아닌 줄(값 없음 포함)은 전부 정부지원금으로 센다. 둘을 더하면 줄 수와 같다. */
+export function sourceCounts(targets: Array<{ source?: TargetSource }>): SourceCounts {
+  let policyFund = 0;
+  for (const t of targets) {
+    if (t.source === "policy-fund") policyFund += 1;
+  }
+  return { governmentSubsidy: targets.length - policyFund, policyFund };
+}
+
+/**
+ * 「계약한 고객」 카드 제목 — 정책자금 줄이 있을 때만 자료별 수를 붙인다.
+ * ★0건이면 받은 제목 그대로다(옛 서버·정부지원금만인 담당에게는 화면이 달라지지 않는다).
+ */
+export function contractCardLabel(base: string, counts: SourceCounts): string {
+  if (counts.policyFund < 1) return base;
+  return `${base} · 정부지원금 ${counts.governmentSubsidy.toLocaleString("ko-KR")} · 정책자금 ${counts.policyFund.toLocaleString("ko-KR")}`;
+}
+
 export const MANUAL_EMAIL_FORMAT_ERROR = "이메일 형식이 아니에요 (예: ceo@company.co.kr)";
 export const MANUAL_EMAIL_DUPLICATE_ERROR = "이 발송의 다른 회사와 같은 주소예요 — 중복으로 제외돼요";
 export const MANUAL_EMAIL_OPTOUT_ERROR = "수신거부한 주소예요 — 보낼 수 없어요";
