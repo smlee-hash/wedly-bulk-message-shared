@@ -539,7 +539,7 @@ export function BulkMessageManual() {
               내 고객(기본) · 전체 · 특정 이름. 프로필에 이름이 없으면 「내 고객」을 고를 수 없어요.
             </InfoCard>
             <InfoCard tone="gray" icon={LayoutGrid} title="숫자 타일 4개" soft>
-              계약한 고객(검색 중에는 「검색에 걸린 고객」) · 알림톡 가능 · 이메일 가능 · 자동 제외. 제외된 분은 표에 남지만 체크가 잠깁니다.
+              받을 사람(검색 중에는 「검색에 걸린 고객」) · 알림톡 가능 · 이메일 가능 · 자동 제외. 제외된 분은 표에 남지만 체크가 잠깁니다.
             </InfoCard>
           </div>
 

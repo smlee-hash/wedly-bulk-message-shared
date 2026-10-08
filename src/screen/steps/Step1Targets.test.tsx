@@ -329,29 +329,31 @@ describe("「구분」 칸 — 회사명 바로 다음에 서고, 자료마다 �
   });
 });
 
-describe("「계약한 고객」 카드 — 정책자금 줄이 있을 때만 자료별 수가 붙는다", () => {
+describe("「받을 사람」 카드 — 승인 시안(2026-10-07) 이름, 정책자금 줄이 있을 때만 자료별 수가 붙는다", () => {
   const gov = target({ rowId: "g-1", source: "government-subsidy" });
   const noSource = target({ rowId: "g-2" }); // 옛 서버·붙여넣은 줄 — 정부지원금으로 센다
   const policy = target({ rowId: "p-1", source: "policy-fund" });
 
-  it("정책자금이 1건 이상이면 「계약한 고객 · 정부지원금 N · 정책자금 M」", () => {
+  it("정책자금이 1건 이상이면 「받을 사람 · 정부지원금 N · 정책자금 M」", () => {
     const rows = [gov, noSource, policy];
     const out = draw({ visibleTargets: rows, sendableTargets: rows });
-    expect(out).toContain("계약한 고객 · 정부지원금 2 · 정책자금 1");
+    expect(out).toContain("받을 사람 · 정부지원금 2 · 정책자금 1");
+    expect(out).not.toContain("계약한 고객 ·");
   });
 
   it("검색 중이면 「검색에 걸린 고객 · …」으로 같은 수가 붙는다", () => {
     const rows = [gov, policy];
     const out = draw({ search: "한빛", visibleTargets: rows, sendableTargets: rows });
     expect(out).toContain("검색에 걸린 고객 · 정부지원금 1 · 정책자금 1");
-    expect(out).not.toContain("계약한 고객 ·");
+    expect(out).not.toContain("받을 사람 ·");
   });
 
-  it("정책자금이 0건이면 지금 그대로다 — 자료별 수를 붙이지 않는다", () => {
+  it("정책자금이 0건이면 이름만 — 자료별 수를 붙이지 않는다", () => {
     const rows = [gov, noSource];
     const out = draw({ visibleTargets: rows, sendableTargets: rows });
-    expect(out).toContain("계약한 고객");
-    expect(out).not.toContain("계약한 고객 ·");
+    expect(out).toContain("받을 사람");
+    expect(out).not.toContain("받을 사람 ·");
+    expect(out).not.toContain("계약한 고객");
     expect(out).not.toContain("정책자금 0");
   });
 });

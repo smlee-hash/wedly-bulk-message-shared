@@ -236,7 +236,7 @@ export function Step1Targets({
 }: Step1TargetsProps) {
   const emailShown = emailMode(channel);
   // 자료별 수는 표의 줄(visibleTargets)에서 센다 — 숫자 카드의 계약 수와 같은 줄들이다.
-  const contractLabel = contractCardLabel(search.trim() ? "검색에 걸린 고객" : "계약한 고객", sourceCounts(visibleTargets));
+  const contractLabel = contractCardLabel(search.trim() ? "검색에 걸린 고객" : "받을 사람", sourceCounts(visibleTargets));
   return (
         <Card>
           <SectionHead

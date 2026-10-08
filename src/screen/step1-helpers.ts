@@ -443,7 +443,7 @@ export function applyManualEmail<T extends ChannelTarget>(t: T, manual?: ManualE
 }
 
 export interface EmailTargetCounts {
-  /** 계약한 고객(검색 중이면 검색에 걸린 고객) */
+  /** 받을 사람 = 계약한 고객(검색 중이면 검색에 걸린 고객) */
   contract: number;
   /** 알림톡 가능 — 번호 기준 */
   chatOk: number;
@@ -504,7 +504,7 @@ export function sourceCounts(targets: Array<{ source?: TargetSource }>): SourceC
 }
 
 /**
- * 「계약한 고객」 카드 제목 — 정책자금 줄이 있을 때만 자료별 수를 붙인다.
+ * 「받을 사람」 카드 제목(2026-10-08 승인 시안 이름 — 옛 「계약한 고객」) — 정책자금 줄이 있을 때만 자료별 수를 붙인다.
  * ★0건이면 받은 제목 그대로다(옛 서버·정부지원금만인 담당에게는 화면이 달라지지 않는다).
  */
 export function contractCardLabel(base: string, counts: SourceCounts): string {
