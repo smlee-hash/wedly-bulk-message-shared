@@ -341,13 +341,13 @@ export function Step1Targets({
 
           {listPhase === "error" && (
             <StatusBox tone="error" title="목록을 불러오지 못했어요" className="mb-4">
-              <div className="flex flex-wrap items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 break-keep">{loadError}</span>
                 <Button type="button" variant="secondary" size="sm" onClick={retryLoad}>
                   <RotateCcw className="h-3.5 w-3.5" />
                   다시 시도
                 </Button>
-              </div>
+              </span>
             </StatusBox>
           )}
 

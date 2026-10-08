@@ -1,5 +1,8 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { act } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString, renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 import type { Target } from "../useBulkState";
 import { Step1Targets, type Step1TargetsProps } from "./Step1Targets";
 
@@ -378,6 +381,51 @@ describe("표 최소 폭 — 알림톡만 보낼 때는 1440 화면 안에 들�
       const tag = tableTag(draw({ channel }));
       expect(tag, channel).toContain("min-w-[1160px]");
       expect(tag, channel).not.toContain("min-w-[880px]");
+    }
+  });
+});
+
+
+describe("목록 실패 안내 — 실제 StatusBox 문단 안에서도 오류와 재시도를 보존한다", () => {
+  const message = "목록을 불러오지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.";
+
+  it("SSR HTML을 파싱해도 오류 문단 안에 설명과 재시도 버튼이 함께 남는다", () => {
+    const host = document.createElement("div");
+    host.innerHTML = draw({ listPhase: "error", loadError: message });
+    const retry = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "다시 시도");
+    expect(retry).toBeDefined();
+    const paragraph = retry!.closest("p");
+    expect(paragraph, "HTML parser가 잘못된 div 때문에 문단을 닫으면 안 된다").not.toBeNull();
+    expect(paragraph!.textContent).toContain(message);
+    expect(paragraph!.querySelector("div, p")).toBeNull();
+    expect(retry!.parentElement!.className).toBe("flex flex-wrap items-center gap-2");
+    expect(retry!.previousElementSibling?.textContent).toBe(message);
+  });
+
+  it("실제 SSR→hydrate에 복구/console 오류가 없고 재시도는 한 번만 호출된다", async () => {
+    const retryLoad = vi.fn();
+    const element = <Step1Targets {...props({ listPhase: "error", loadError: message, retryLoad })} />;
+    const host = document.createElement("div");
+    host.innerHTML = renderToString(element);
+    document.body.append(host);
+    const errors: unknown[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => { errors.push(args); });
+    const priorAct = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    try {
+      await act(async () => { root = hydrateRoot(host, element, { onRecoverableError: (error) => errors.push(error) }); });
+      const retry = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.trim() === "다시 시도");
+      expect(retry).toBeDefined();
+      await act(async () => { retry!.click(); });
+      expect(retryLoad).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([]);
+    } finally {
+      if (root) await act(async () => { root!.unmount(); });
+      host.remove();
+      consoleError.mockRestore();
+      if (priorAct === undefined) delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+      else (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = priorAct;
     }
   });
 });
